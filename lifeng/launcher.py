@@ -65,6 +65,11 @@ def _ensure_streamlit_credentials() -> bool:
 
 
 def main() -> int:
+    # 必须先做：本函数的 banner 含中文，Windows 非中文控制台上会直接崩溃
+    from lifeng.console import make_output_safe
+
+    make_output_safe()
+
     # 显式 import，确保 PyInstaller 把整包收进去
     import lifeng  # noqa: F401
     from streamlit.web import cli as stcli

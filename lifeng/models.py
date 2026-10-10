@@ -228,6 +228,11 @@ def load_problems(directory: str | Path) -> list[Problem]:
 
 
 def _main(argv: list[str]) -> int:
+    # Windows 控制台默认 cp1252，打印中文会崩溃（实测见 lifeng/console.py）
+    from lifeng.console import make_output_safe
+
+    make_output_safe()
+
     target = Path(argv[1]) if len(argv) > 1 else Path("problems")
     try:
         problems = load_problems(target)
