@@ -69,8 +69,8 @@ class StorageError(StoreError):
 
     存在的意义是把**后端细节挡在 ``store.py`` 之内**：
     其他模块只认识 ``StoreError``，**不得 import sqlite3**。
-    这样将来把 SQLite 换成服务器数据库时，调用方无需改动 ——
-    对应「先本地、之后再考虑服务器」的分期决策。
+    这样将来把 SQLite 换成服务器数据库时，调用方无需改动。
+    （服务端排在全部功能**最后**，见 Design Spec ADR-001 优先级决议。）
     """
 
 

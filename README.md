@@ -64,9 +64,9 @@ tests/
 
 > **只有 `lifeng/store.py` 可以 `import sqlite3`。其余模块一律使用 `StoreError`。**
 
-这不是洁癖 —— 本项目的定位是**先本地、之后再考虑服务器**（见 Design Spec ADR-001）。
-把 SQLite 关在一个文件里，将来换后端时改动面就被限住了；
-否则迁移成本会悄悄扩散到界面与业务逻辑。
+这不是洁癖 —— 本项目的定位是**本地优先，服务端排在全部功能最后**
+（见 Design Spec ADR-001）。把 SQLite 关在一个文件里，将来真要换后端时
+改动面就被限住了；否则迁移成本会悄悄扩散到界面与业务逻辑。
 
 由 `tests/test_storage_boundary.py` 自动强制，违规即测试失败。
 （该纪律已修正过一处违约：`app.py` 曾直接捕获 `sqlite3.Error`。）
