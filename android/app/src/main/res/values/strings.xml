@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">砺锋</string>
+
+    <string name="setup_title">连接到老师电脑上的砺锋</string>
+    <string name="setup_hint">http://192.168.1.10:8501</string>
+    <string name="setup_help">在老师电脑上启动砺锋后，窗口里会显示一个 Network URL，把它填在这里。手机要和电脑连同一个 Wi-Fi。</string>
+    <string name="connect">连接</string>
+    <string name="need_url">请先填写地址</string>
+
+    <string name="connecting">正在连接…</string>
+    <string name="load_failed">连不上。</string>
+    <string name="load_failed_help">请确认：\n1. 老师电脑上的砺锋已经启动；\n2. 手机和电脑连的是同一个 Wi-Fi；\n3. 地址和端口没有抄错。</string>
+    <string name="retry">重试</string>
+    <string name="change_url">改地址</string>
+</resources>

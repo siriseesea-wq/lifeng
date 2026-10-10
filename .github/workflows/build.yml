@@ -56,9 +56,49 @@ jobs:
           path: ${{ matrix.archive }}
           if-no-files-found: error
 
+  # 安卓端：WebView 客户端 APK。
+  #
+  # 注意这不是「把砺锋打进手机」—— Streamlit 是服务端 Web 框架，
+  # 打不进 APK。这个壳提供的是「装一次、点图标就用」的体验，
+  # 服务仍在老师电脑上跑，手机与电脑需在同一网络内。
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      # 先跑单元测试：ServerUrl 的地址规范化是安卓端唯一有真实逻辑的部分，
+      # 它跑在 JVM 上，不需要模拟器。
+      - name: 安卓单元测试
+        working-directory: android
+        run: gradle test --no-daemon --console=plain
+
+      - name: 构建 APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --console=plain
+
+      - name: 规范产物名
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk lifeng-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifeng-android-apk
+          path: lifeng-android.apk
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write

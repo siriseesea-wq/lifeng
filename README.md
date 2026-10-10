@@ -206,15 +206,63 @@ pyarrow/pandas/numpy）。**分发时要打包整个目录**，不能只拷可�
 
 ### 平台支持
 
-| 平台 | 支持 | 说明 |
+| 平台 | 产物 | 说明 |
 |---|---|---|
-| Windows / Linux / macOS | ✅ | 由 `.github/workflows/build.yml` 在三个平台原生构建；推 `v*` tag 自动发 Release |
-| **Android** | ❌ **不打包，也不需要** | Streamlit 是**服务端 Web 框架**，界面由浏览器渲染、Python 服务端通过 websocket 驱动。`python-for-android`/`buildozer` 打的是 Kivy（另一套 GUI 工具包），无法打包 Streamlit。所谓"Streamlit 安卓方案"都是 **WebView 壳指向一个已运行的服务器**，并没有把应用装进去。<br>**正确用法**：学生在安卓浏览器里打开你的局域网地址即可 —— 实测 Streamlit 默认绑定所有网卡。 |
+| Windows / Linux / macOS | `lifeng-*` 可执行文件 | 由 `.github/workflows/build.yml` 三平台原生构建 |
+| **Android** | `lifeng-android.apk` | 安卓客户端，见下节 |
 
 > PyInstaller 产物**不做跨平台交叉编译**：Windows 的 exe 必须在 Windows 上构建。
 > 这正是 CI 用三平台矩阵的原因。
 
 ---
+
+## 安卓端
+
+### 先说清它是什么
+
+**是一个安卓客户端 App，不是把砺锋装进手机。**
+
+Streamlit 是**服务端 Web 框架**：界面由浏览器渲染，Python 服务端通过 websocket 驱动。
+`python-for-android` / `buildozer` 打的是 Kivy（另一套 GUI 工具包），
+**无法把 Streamlit 打进 APK** —— 这一点没有绕过去的办法。
+
+所以 APK 里是一个 WebView + 一个记住地址的设置页。它解决的是**体验问题**：
+
+| 不用 APK | 用 APK |
+|---|---|
+| 学生每次要输 `http://192.168.1.10:8501` | 装一次，点桌面图标就用 |
+| 容易抄错地址 | 地址只问一次，存在本地 |
+| 连不上只看到白屏 | 给出可操作的排查提示 |
+
+**手机与老师电脑必须在同一网络内** —— 服务始终在电脑上跑。
+
+### 构建
+
+```bash
+# 本地（需要 Android SDK + JDK 17）
+cd android && gradle test && gradle assembleDebug
+# 产物：android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+CI 会自动构建并随 Release 发布，无需本地环境。
+
+### 为什么发的是 debug 包
+
+debug 包由构建机**自动签名**，可以直接侧载安装。
+release 包需要自备签名证书并保管密钥 —— 对课堂分发反而多一道门槛，
+而且一旦密钥丢失就无法覆盖安装。课堂场景下 debug 包更合适。
+
+### 一个必须保留的配置
+
+`AndroidManifest.xml` 里的 `android:usesCleartextTraffic="true"` **不是可选项**：
+
+Android 9（API 28）起默认禁止明文 HTTP，而本应用连的是局域网 `http://`。
+关掉这一项，WebView 会**直接拒绝加载且没有任何提示** —— 表现为白屏。
+
+服务在局域网内、不经过公网，明文传输的暴露面是同一 Wi-Fi 下的人，课堂场景可接受。
+
+---
+
 
 ## 已知局限
 

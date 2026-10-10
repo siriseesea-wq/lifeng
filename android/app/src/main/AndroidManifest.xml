@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="true">
+
+        <!--
+          usesCleartextTraffic 是必须的，不是可选项。
+
+          Android 9（API 28）起默认禁止明文 HTTP。而本应用连的是
+          局域网里的 http://192.168.x.x:8501 —— 不开这一项，
+          WebView 会直接拒绝加载，表现为「白屏没有任何提示」。
+
+          服务在局域网内、不经过公网，明文传输的暴露面就是同一个
+          Wi-Fi 下的人；对课堂场景可以接受。
+        -->
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

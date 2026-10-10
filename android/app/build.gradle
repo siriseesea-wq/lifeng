@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.lifeng.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.lifeng.app"
+        minSdk 24          // Android 7.0：覆盖绝大多数在用设备
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildTypes {
+        // 只发 debug 包：它由构建机自动签名，可直接侧载安装。
+        // release 包需要自备签名证书，对课堂分发反而多一道门槛。
+        debug {
+            applicationIdSuffix ""
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // 刻意不引入任何三方运行时依赖：这个壳只需要 WebView。
+}
+
+dependencies {
+    // 仅测试用：让 ServerUrl 的规范化逻辑能在 JVM 上跑，不必装到手机上试
+    testImplementation 'junit:junit:4.13.2'
+}

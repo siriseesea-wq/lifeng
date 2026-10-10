@@ -23,3 +23,11 @@ build/
 
 # 构建日志
 logs/
+
+# 安卓构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.keystore

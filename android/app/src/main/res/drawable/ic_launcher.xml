@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  应用图标：深蓝底 + 白色锥形瓶剪影。
+
+  用矢量而非 PNG：不需要引入二进制资源，也就不会在仓库里塞进
+  看不见来源的图片。minSdk 24 起矢量图标可直接作为 android:icon 使用。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#0D47A1"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+
+    <!-- 瓶身：瓶颈竖直，下部外扩 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,18 L64,18 L64,38 L80,78 L28,78 L44,38 Z" />
+
+    <!-- 瓶内液面 -->
+    <path
+        android:fillColor="#64B5F6"
+        android:pathData="M36,62 L72,62 L80,78 L28,78 Z" />
+</vector>

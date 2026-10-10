@@ -33,3 +33,26 @@ jobs:
       # 独立跑一次边界测试，让它失败时在 CI 上更显眼
       - name: 存储后端边界检查（仅 store.py 可 import sqlite3）
         run: python -m pytest tests/test_storage_boundary.py -q
+
+  # 安卓端单独一个 job：只在 ubuntu 上跑，且只跑测试（不打 APK，省时间）。
+  # 不打 APK 也放进来的理由：ServerUrl 的地址规范化是安卓端唯一有真实
+  # 逻辑的部分，坏掉的话要等打 tag 才发现，代价太大。
+  android-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: 安卓单元测试
+        working-directory: android
+        run: gradle test --no-daemon --console=plain
