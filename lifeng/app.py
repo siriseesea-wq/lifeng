@@ -15,7 +15,6 @@ Streamlit 层只负责渲染与状态。
 from __future__ import annotations
 
 import os
-import sqlite3
 from pathlib import Path
 
 import streamlit as st
@@ -238,10 +237,10 @@ def main() -> None:
                 st.session_state.history.append(("尝试", attempt_text))
                 st.success("已记录。")
             except StoreError as exc:
+                # StoreError 同时覆盖参数错误与底层存储失败
+                # （StorageError 是其子类）。界面层不知道后端是 SQLite 还是别的 ——
+                # 这是「先本地、之后再考虑服务器」能低成本迁移的前提。
                 st.error(f"记录失败：{exc}")
-            except sqlite3.Error as exc:
-                # 磁盘满、库损坏等 —— 不应静默吞掉，否则数据缺失无人察觉
-                st.error(f"数据库错误：{exc}")
 
     # ---- 请求提示 -------------------------------------------------------
     if ask_hint:

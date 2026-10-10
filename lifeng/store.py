@@ -8,9 +8,10 @@
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Literal
 
 DEFAULT_DB_PATH = Path("store.db")
 
@@ -50,7 +51,30 @@ CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_code);
 
 
 class StoreError(ValueError):
-    """存储层参数非法。"""
+    """存储层参数非法（调用方传错了参数）。"""
+
+
+class StorageError(StoreError):
+    """底层存储失败（磁盘满、库损坏、并发冲突等）。
+
+    存在的意义是把**后端细节挡在 ``store.py`` 之内**：
+    其他模块只认识 ``StoreError``，**不得 import sqlite3**。
+    这样将来把 SQLite 换成服务器数据库时，调用方无需改动 ——
+    对应「先本地、之后再考虑服务器」的分期决策。
+    """
+
+
+def _translate_storage_errors(fn):
+    """把后端异常翻译成 :class:`StorageError`，防止 sqlite3 泄漏到调用方。"""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except sqlite3.Error as exc:
+            raise StorageError(str(exc)) from exc
+
+    return wrapper
 
 
 class Store:
@@ -63,6 +87,7 @@ class Store:
             store.log_attempt(sid, "学生本次尝试……", level_requested=1, hint_text="……")
     """
 
+    @_translate_storage_errors
     def __init__(self, path: str | Path = DEFAULT_DB_PATH) -> None:
         self.path = Path(path)
         self._conn = sqlite3.connect(self.path)
@@ -101,6 +126,7 @@ class Store:
 
     # -- 写入 -------------------------------------------------------------
 
+    @_translate_storage_errors
     def create_session(
         self, problem_id: str, student_code: str, mode: AttemptMode
     ) -> int:
@@ -119,6 +145,7 @@ class Store:
         self._conn.commit()
         return int(cur.lastrowid)
 
+    @_translate_storage_errors
     def log_attempt(
         self,
         session_id: int,
@@ -167,6 +194,7 @@ class Store:
         """回填人工判定结果（计划 §3：n=20 时由实验者判定）。"""
         self._update_flag(attempt_id, "progressed", progressed)
 
+    @_translate_storage_errors
     def get_attempt(self, attempt_id: int) -> sqlite3.Row:
         row = self._conn.execute(
             "SELECT * FROM attempts WHERE id = ?", (attempt_id,)
@@ -175,6 +203,7 @@ class Store:
             raise StoreError(f"attempt id 不存在：{attempt_id}")
         return row
 
+    @_translate_storage_errors
     def latest_attempt_id(self, session_id: int) -> int | None:
         row = self._conn.execute(
             "SELECT id FROM attempts WHERE session_id = ? ORDER BY id DESC LIMIT 1",
@@ -182,6 +211,7 @@ class Store:
         ).fetchone()
         return int(row["id"]) if row else None
 
+    @_translate_storage_errors
     def attach_hint(
         self, attempt_id: int, level: int, hint_text: str, *, leaked: bool = False
     ) -> None:
@@ -219,6 +249,7 @@ class Store:
         """回填 T4 校验结果。"""
         self._update_flag(attempt_id, "leaked", leaked)
 
+    @_translate_storage_errors
     def set_pitfall_index(self, attempt_id: int, index: int | None) -> None:
         """回填该次尝试所属的卡点序号（从 0 起，``None`` 表示不适用）。
 
@@ -234,6 +265,7 @@ class Store:
         if cur.rowcount == 0:
             raise StoreError(f"attempt id 不存在：{attempt_id}")
 
+    @_translate_storage_errors
     def _update_flag(self, attempt_id: int, column: str, value: bool) -> None:
         if column not in ("progressed", "leaked"):
             raise StoreError(f"未知字段：{column}")
@@ -247,6 +279,7 @@ class Store:
 
     # -- 读取 -------------------------------------------------------------
 
+    @_translate_storage_errors
     def counts(self) -> dict[str, int]:
         """行数概览，供快速自检与 T9 前置检查使用。"""
         return {
@@ -261,16 +294,24 @@ class Store:
             ).fetchone()[0],
         }
 
-    def iter_attempts(self) -> Iterator[sqlite3.Row]:
-        """按时间顺序产出带会话上下文的作答记录，供 T9 消费。"""
-        yield from self._conn.execute(
-            """
-            SELECT a.id, a.session_id, a.level_requested, a.attempt_text,
-                   a.hint_text, a.leaked, a.progressed, a.pitfall_index,
-                   a.created_at,
-                   s.problem_id, s.student_code, s.mode
-            FROM attempts a
-            JOIN sessions s ON s.id = a.session_id
-            ORDER BY a.id
-            """
+    @_translate_storage_errors
+    def iter_attempts(self) -> list[sqlite3.Row]:
+        """按时间顺序返回带会话上下文的作答记录，供 T9 消费。
+
+        返回列表而非生成器：生成器会把异常推迟到迭代时抛出，
+        从而绕过 ``_translate_storage_errors`` 的翻译。
+        （方法名保留 ``iter_`` 以兼容既有调用点。）
+        """
+        return list(
+            self._conn.execute(
+                """
+                SELECT a.id, a.session_id, a.level_requested, a.attempt_text,
+                       a.hint_text, a.leaked, a.progressed, a.pitfall_index,
+                       a.created_at,
+                       s.problem_id, s.student_code, s.mode
+                FROM attempts a
+                JOIN sessions s ON s.id = a.session_id
+                ORDER BY a.id
+                """
+            )
         )
