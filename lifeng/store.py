@@ -57,6 +57,21 @@ CREATE TABLE IF NOT EXISTS attempts (
 
 CREATE INDEX IF NOT EXISTS idx_attempts_session ON attempts(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_code);
+
+-- 复习状态：按 (学生, 题目) 记录掌握度与下次复习时间。
+-- 由 lifeng/review.py 的 SM-2 调度写入；掌握度由 lifeng/mastery.py 更新。
+CREATE TABLE IF NOT EXISTS review_state (
+    student_code  TEXT    NOT NULL,
+    problem_id    TEXT    NOT NULL,
+    mastery       REAL    NOT NULL,
+    next_review   TEXT    NOT NULL,          -- ISO 日期 YYYY-MM-DD
+    interval_days INTEGER NOT NULL,
+    review_count  INTEGER NOT NULL,
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    PRIMARY KEY (student_code, problem_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_due ON review_state(student_code, next_review);
 """
 
 
@@ -303,6 +318,72 @@ class Store:
                 "SELECT COUNT(*) FROM attempts WHERE progressed IS NOT NULL"
             ).fetchone()[0],
         }
+
+    # -- 复习状态（纯读写；调度编排在 lifeng/review.py）-------------------
+
+    @_translate_storage_errors
+    def get_review_state(self, student_code: str, problem_id: str) -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM review_state WHERE student_code = ? AND problem_id = ?",
+            (student_code, problem_id),
+        ).fetchone()
+
+    @_translate_storage_errors
+    def upsert_review_state(
+        self,
+        student_code: str,
+        problem_id: str,
+        *,
+        mastery: float,
+        next_review: str,
+        interval_days: int,
+        review_count: int,
+    ) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO review_state
+                (student_code, problem_id, mastery, next_review,
+                 interval_days, review_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+            ON CONFLICT(student_code, problem_id) DO UPDATE SET
+                mastery       = excluded.mastery,
+                next_review   = excluded.next_review,
+                interval_days = excluded.interval_days,
+                review_count  = excluded.review_count,
+                updated_at    = excluded.updated_at
+            """,
+            (student_code, problem_id, mastery, next_review, interval_days, review_count),
+        )
+        self._conn.commit()
+
+    @_translate_storage_errors
+    def due_reviews(
+        self, student_code: str, *, on_date: str, limit: int
+    ) -> list[sqlite3.Row]:
+        """到期待复习项，最弱的排前面。``on_date`` 为 ISO 日期串。"""
+        return list(
+            self._conn.execute(
+                """
+                SELECT * FROM review_state
+                 WHERE student_code = ? AND next_review <= ?
+                 ORDER BY mastery ASC, next_review ASC
+                 LIMIT ?
+                """,
+                (student_code, on_date, limit),
+            )
+        )
+
+    @_translate_storage_errors
+    def student_overview(self, student_code: str) -> list[sqlite3.Row]:
+        """该学生全部题目的复习状态，按掌握度升序（最弱在前）。"""
+        return list(
+            self._conn.execute(
+                "SELECT * FROM review_state WHERE student_code = ? ORDER BY mastery ASC",
+                (student_code,),
+            )
+        )
+
+    # -- 读取 -------------------------------------------------------------
 
     @_translate_storage_errors
     def iter_attempts(self) -> list[sqlite3.Row]:
