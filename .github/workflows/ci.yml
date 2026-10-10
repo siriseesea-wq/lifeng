@@ -47,7 +47,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
+      # 不用 android-actions/setup-android：它执行的 sdkmanager "tools"
+      # 在新版 SDK 仓库里已不存在，会让 action 自身失败。runner 已预装 SDK。
 
       - uses: gradle/actions/setup-gradle@v4
         with:
