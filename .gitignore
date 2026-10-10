@@ -1,0 +1,17 @@
+# 虚拟环境
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 实验数据（含未成年人答题记录，不得入库）
+store.db
+store.db-journal
+*.sqlite3
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
