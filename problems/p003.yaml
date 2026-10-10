@@ -1,6 +1,9 @@
 id: p003
 domain: organic
 type: reasoning
+concepts:
+  - electrophilic-aromatic-substitution
+  - aromaticity
 skeleton_source: ai
 
 statement: |

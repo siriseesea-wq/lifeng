@@ -24,6 +24,10 @@ datas = [
     *st_datas,
     (str(ROOT / "lifeng" / "app.py"), "app"),
     (str(ROOT / "problems"), "problems"),
+    # 知识点图与示例资料也必须打进包 —— 少了它们，「图谱」「画像」
+    # 两个页面和训练页的「查资料」在打包版里会直接失效。
+    (str(ROOT / "concepts.yaml"), "."),
+    (str(ROOT / "materials"), "materials"),
 ]
 
 hiddenimports = [
@@ -34,6 +38,13 @@ hiddenimports = [
     "lifeng.store",
     "lifeng.hint_engine",
     "lifeng.leak_check",
+    "lifeng.review",
+    "lifeng.mastery",
+    "lifeng.concepts",
+    "lifeng.profile",
+    "lifeng.materials",
+    "lifeng.planner",
+    "lifeng.views",
     "lifeng.app",
 ]
 

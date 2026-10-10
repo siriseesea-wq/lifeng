@@ -1,6 +1,9 @@
 id: p007
 domain: organic
 type: reasoning
+concepts:
+  - carbocation-rearrangement
+  - carbocation-stability
 skeleton_source: ai
 
 statement: |

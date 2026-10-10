@@ -1,6 +1,9 @@
 id: p009
 domain: organic
 type: reasoning
+concepts:
+  - hydroboration
+  - steric-effects
 skeleton_source: ai
 
 statement: |

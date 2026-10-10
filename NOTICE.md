@@ -15,6 +15,8 @@
   |---|---|---|
   | `lifeng/review.py` | `learning_agent/core/scheduler.py` | 复习单元由「知识点」改为「题目」；**修正了原实现的一处缺陷**（见下）；掌握度更新改由 `mastery.py` 统一负责 |
   | `lifeng/mastery.py` | `learning_agent/core/mastery.py` | 去掉与本项目无关的知识点类型/难度表；保留 3PL 更新式与调整因子 |
+  | `lifeng/concepts.py` | `learning_agent/core/graph.py` | 取其**核心形状**（知识点 + 前置依赖 + 相关概念 + 加载时校验）。原版那份是 682 行的完整教材图谱（章节簇、教材锚点、跨项目引用、JSON 导入导出），本项目只保留题库场景需要的部分，并改为 YAML 以与本项目其余 schema 一致。**新增了前置依赖成环检测** —— 成环意味着「学 A 要先学 B，学 B 要先学 A」，学生永远无法开始 |
+  | `lifeng/materials.py` | `learning_agent/rag/` （思路）| **未复制代码**。原版用 chromadb + ollama 做向量检索；本项目改用纯标准库的 BM25。理由见下方说明 |
 
 ### 移植时修正的缺陷
 
@@ -29,6 +31,18 @@ idx = min(review_count + 1, len(DEFAULT_INTERVALS) - 1)
 
 本项目改为由**上次间隔**推导档位，使回炉同时复位档位。
 回归测试见 `tests/test_review.py::TestNextInterval::test_ladder_restarts_after_failure`。
+
+### 为什么检索不用向量库
+
+活书的 `rag/` 用 chromadb + ollama。本项目改用纯标准库的 BM25，理由是：
+
+- **规模不匹配**：题库是几十道题、资料是几篇笔记。这个量级下
+  向量检索的收益抵不过它的代价（chromadb 会显著撑大已经 300MB+ 的打包体积，
+  ollama 还要求用户额外装一个模型运行时）
+- **要能离线**：本项目的定位是「我和我带的几个学生本地用」，
+  用户不该为了查一段讲义再装一个 embedding 服务
+- **BM25 够用**：实测 10 道题全部检索到正确段落，且正确段落
+  领先第二名一倍以上。真到了几千篇的规模再换，那时换才有意义
 
 ### MIT 许可证原文
 

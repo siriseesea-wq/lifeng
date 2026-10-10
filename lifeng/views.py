@@ -21,10 +21,13 @@ from pathlib import Path
 
 import streamlit as st
 
+from lifeng.concepts import ConceptError, ConceptGraph
 from lifeng.hint_engine import HintError
 from lifeng.leak_check import guard_hint, skeleton_leaks_answer
+from lifeng.materials import load_materials, retrieve
 from lifeng.models import Problem, load_problems
 from lifeng.planner import build_daily_plan
+from lifeng.profile import build_profile, concept_titles
 from lifeng.psych import (
     AROUSAL_NOTE,
     BOUNDARY_ADVICE,
@@ -116,6 +119,36 @@ def finish_problem(
     )
 
 
+def build_material_query(
+    problem: Problem,
+    *,
+    concepts_path: Path | None = None,
+    attempt_text: str = "",
+) -> str:
+    """构造资料检索的查询串。
+
+    **必须用知识点的中文标题，不能用 id。** id 是英文 slug
+    （如 ``electrophilic-aromatic-substitution``），而资料是中文 ——
+    把 slug 塞进查询只会灌噪声。这是实测发现的问题：用 id 时，
+    芳香亲电取代那道题会把「共轭二烯的加成」排到第一位。
+    """
+    parts = [problem.statement[:300]]
+
+    titles: list[str] = []
+    if concepts_path is not None and problem.concepts:
+        try:
+            graph = ConceptGraph.load(concepts_path)
+            titles = concept_titles(graph, tuple(problem.concepts))
+        except ConceptError:
+            titles = []
+    # 图谱不可用时退回 id（至少不比空查询差），并在调用方不做特殊处理
+    parts.append(" ".join(titles) if titles else " ".join(problem.concepts))
+
+    if attempt_text.strip():
+        parts.append(attempt_text[:200])
+    return " ".join(part for part in parts if part.strip())
+
+
 # --------------------------------------------------------------------------
 # 训练
 # --------------------------------------------------------------------------
@@ -183,6 +216,42 @@ def render_train(
             st.warning(f"骨架含答案关键量，结构性防泄漏已失效：{leaks}")
         else:
             st.success("骨架卫生：通过")
+
+    # ---- 资料检索（学生主动查）------------------------------------------
+    #
+    # 刻意不自动展示。学生一卡住就看到讲义，等于跳过了那段费力思考 ——
+    # 而那段思考正是这个工具存在的理由。要查得自己按。
+    with st.expander("📖 查资料（讲义里的相关段落）"):
+        st.caption(
+            "这里只给讲义原文，**不直接给答案** —— 怎么用由你判断。"
+        )
+        if st.button("检索相关段落", key=f"findmat_{problem.id}"):
+            materials = load_materials(st.session_state.get("materials_dir", "materials"))
+            query = build_material_query(
+                problem,
+                concepts_path=Path(st.session_state.get("concepts_path", "concepts.yaml")),
+                attempt_text=st.session_state.get("last_attempt", ""),
+            )
+            st.session_state.material_hits = [
+                (m.label, m.text, round(score, 2))
+                for m, score in retrieve(materials, query, limit=3)
+            ]
+            st.session_state.material_total = len(materials)
+
+        hits = st.session_state.get("material_hits")
+        if hits:
+            for label, text, score in hits:
+                st.markdown(f"**{label}**　`{score}`")
+                st.markdown(text)
+                st.divider()
+        elif hits is not None:
+            total = st.session_state.get("material_total", 0)
+            if total == 0:
+                st.info(
+                    "资料库是空的。把讲义或笔记放成 .md / .txt 放到 `materials/` 目录就会自动索引。"
+                )
+            else:
+                st.info(f"在 {total} 个段落里没找到相关度足够高的内容。")
 
     # ---- 学生尝试 -------------------------------------------------------
     attempt_text = st.text_area(
@@ -558,3 +627,185 @@ def render_psych() -> None:
     st.divider()
     with st.expander("关于「适度紧张最好」这个说法"):
         st.markdown(AROUSAL_NOTE)
+
+
+# --------------------------------------------------------------------------
+# 图谱
+# --------------------------------------------------------------------------
+
+
+def _load_graph(concepts_path: Path) -> ConceptGraph | None:
+    try:
+        graph = ConceptGraph.load(concepts_path)
+    except ConceptError as exc:
+        st.error(f"知识点图装载失败：{exc}")
+        return None
+    if graph.errors:
+        for problem in graph.errors:
+            st.error(f"知识点图有问题：{problem}")
+        return None
+    return graph
+
+
+def render_graph(
+    *,
+    student_code: str,
+    db_path: Path,
+    concepts_path: Path,
+    problems_dir: Path,
+) -> None:
+    """知识点图谱可视化。
+
+    用 Streamlit 内置的 ``st.graphviz_chart``（接受 DOT 字符串）——
+    **不需要 graphviz 包，也不需要 plotly**，打包体积不涨。
+    """
+    st.subheader("知识点图谱")
+    graph = _load_graph(concepts_path)
+    if graph is None:
+        return
+
+    try:
+        problems = load_problems(problems_dir)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"题库装载失败：{exc}")
+        return
+
+    known: set[str] = set()
+    weak: set[str] = set()
+    if student_code:
+        with Store(db_path) as store:
+            profile = build_profile(store, problems, graph, student_code)
+        known = set(profile.mastered)
+        weak = set(profile.weak)
+        st.caption(f"{student_code}：{profile.headline}")
+
+    st.graphviz_chart(graph.to_dot(emphasise=known, missing=weak), use_container_width=True)
+    st.caption("实线箭头 = 前置依赖；虚线 = 相关概念。绿色已稳、红色薄弱、灰色未触及。")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("知识点总数", len(graph))
+    c2.metric("已稳", len(known))
+    c3.metric("薄弱", len(weak))
+
+    # 题库覆盖缺口 —— 图谱比题库大的时候，这里直接告诉你该补什么题
+    covered = {c for p in problems for c in p.concepts}
+    uncovered = sorted(set(graph.concepts) - covered)
+    if uncovered:
+        with st.expander(f"图谱里有 {len(uncovered)} 个知识点还没有对应题目"):
+            for cid in uncovered:
+                concept = graph.get(cid)
+                st.markdown(f"- **{concept.title if concept else cid}**")
+            st.caption("这是题库的空白，不是学生的空白。")
+
+    untagged = [p.id for p in problems if not p.concepts]
+    if untagged:
+        with st.expander(f"有 {len(untagged)} 道题还没打知识点标签"):
+            st.write(", ".join(untagged))
+
+
+# --------------------------------------------------------------------------
+# 画像（L3 综合判断）
+# --------------------------------------------------------------------------
+
+
+def render_profile(
+    *,
+    student_code: str,
+    db_path: Path,
+    concepts_path: Path,
+    problems_dir: Path,
+) -> None:
+    """学生画像与卡点诊断。
+
+    这是三层记忆里的 **L3**：L1 是当前会话（session_state）、
+    L2 是跨会话事实（store.db），L3 是从 L2 推导出的综合判断 —— 就是这一页。
+
+    它回答的是「我到底缺什么、下一步动哪一块」，而不是再列一遍数据。
+    """
+    st.subheader("学生画像")
+    if not student_code:
+        st.info("请先在左侧填写学生代号。")
+        return
+
+    graph = _load_graph(concepts_path)
+    if graph is None:
+        return
+    try:
+        problems = load_problems(problems_dir)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"题库装载失败：{exc}")
+        return
+
+    with Store(db_path) as store:
+        profile = build_profile(store, problems, graph, student_code)
+
+    if profile.is_empty:
+        st.info("还没有可用的数据。先去「今日」或「训练」页做几道题。")
+        return
+
+    st.info(profile.headline)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("已稳知识点", len(profile.mastered))
+    c2.metric("薄弱知识点", len(profile.weak))
+    c3.metric("未触及", len(profile.untouched))
+    c4.metric("提示依赖", f"{profile.hint_dependency:.1f} 层")
+
+    # ── 概念层面的掌握度（图形化）───────────────────────────────────
+    st.markdown("**各知识点掌握度**")
+    import pandas as pd
+
+    rows = sorted(profile.standings, key=lambda s: s.mastery)
+    frame = pd.DataFrame(
+        {"掌握度": [s.mastery for s in rows]},
+        index=[s.title for s in rows],
+    )
+    st.bar_chart(frame, height=max(200, 26 * len(rows)))
+
+    st.markdown("**明细**")
+    st.dataframe(
+        [
+            {
+                "知识点": s.title,
+                "状态": s.label,
+                "掌握度": round(s.mastery, 3),
+                "涉及题号": ", ".join(s.problem_ids),
+            }
+            for s in rows
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # ── 下一步：前置已满足的可学项 ──────────────────────────────────
+    st.markdown("**下一步可以学什么**")
+    if profile.next_concepts:
+        st.write("、".join(concept_titles(graph, profile.next_concepts[:8])))
+        if profile.missing_prerequisites:
+            st.caption(
+                "完整的前置缺口（含暂时学不了的）共 "
+                f"{len(profile.missing_prerequisites)} 个。"
+            )
+    else:
+        st.success("前置都已满足，没有待补的项。")
+
+    # ── 卡点诊断（错误模式）─────────────────────────────────────────
+    st.divider()
+    st.markdown("**卡点诊断**")
+    if not profile.stall_patterns:
+        st.caption(
+            "还没有卡点记录。在训练页点「卡住了，先放着」时如果标了卡点，"
+            "这里会显示你**总卡在哪一类地方**。"
+        )
+    else:
+        st.bar_chart(
+            pd.DataFrame(
+                {"次数": [count for _, count in profile.stall_patterns]},
+                index=[f"卡点 {i + 1}" for i, _ in profile.stall_patterns],
+            ),
+            height=180,
+        )
+        st.caption(
+            "比「做对没做对」更有用的信号：如果总是卡在第 1 类，"
+            "说明问题在**方向**；总卡在最后一类，说明在**收尾**。"
+        )

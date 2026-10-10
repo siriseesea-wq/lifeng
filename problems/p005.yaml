@@ -1,6 +1,8 @@
 id: p005
 domain: organic
 type: reasoning
+concepts:
+  - radical-chemistry
 skeleton_source: ai
 
 statement: |

@@ -75,6 +75,9 @@ class Problem:
     skeleton: Skeleton | None
     #: 骨架来源；默认 human。AI 出题时置为 "ai"（见 VALID_SKELETON_SOURCES 说明）。
     skeleton_source: SkeletonSource = "human"
+    #: 这道题考到的知识点 id（对应 concepts.yaml）。
+    #: 为空表示尚未打标 —— 图谱相关的功能会跳过它，但引导功能不受影响。
+    concepts: tuple[str, ...] = ()
 
     @property
     def is_reasoning(self) -> bool:
@@ -153,6 +156,20 @@ def _parse_key_quantities(raw: dict, path: Path) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _parse_concepts(raw: dict, path: Path) -> tuple[str, ...]:
+    """解析这道题考到的知识点 id。
+
+    可选字段：为空只意味着「没打标」，图谱相关功能会跳过它，
+    但引导功能完全不受影响 —— 打标是增量增强，不是前置条件。
+    """
+    value = raw.get("concepts")
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise SkeletonError(f"{path}: `concepts` 必须是列表")
+    return tuple(str(v).strip() for v in value if str(v).strip())
+
+
 # --------------------------------------------------------------------------
 # 装载
 # --------------------------------------------------------------------------
@@ -181,6 +198,7 @@ def parse_problem(raw: object, source: str | Path = "<memory>") -> Problem:
     statement = _require_str(mapping, "statement", path, "<root>")
     answer = _require_str(mapping, "answer", path, "<root>")
     key_quantities = _parse_key_quantities(mapping, path)
+    concepts = _parse_concepts(mapping, path)
 
     raw_source = mapping.get("skeleton_source", "human")
     if raw_source not in VALID_SKELETON_SOURCES:
@@ -213,6 +231,7 @@ def parse_problem(raw: object, source: str | Path = "<memory>") -> Problem:
         key_quantities=key_quantities,
         skeleton=skeleton,
         skeleton_source=raw_source,  # type: ignore[arg-type]
+        concepts=concepts,
     )
 
 

@@ -1,0 +1,129 @@
+# 砺锋知识点图
+#
+# 与 problems/*.yaml 的关系：每道题用 `concepts:` 声明它考到的知识点。
+# 本文件定义知识点本身，以及它们之间的两种关系：
+#
+#   prerequisites —— 学习顺序约束。没掌握前置就学这个，会很吃力。
+#   related       —— 横向联系（类比、对比）。不构成顺序约束。
+#
+# 校验：`python -m lifeng.concepts concepts.yaml`
+# 会检查悬空引用、自引用、以及**前置成环**（成环意味着永远无法开始学）。
+
+concepts:
+  # ── 基础 ────────────────────────────────────────────────────────────
+  - id: electronic-effects
+    title: 电子效应（诱导 / 共轭）
+    note: 判断电子往哪走，是有机推理的第一步
+    domain: organic
+
+  - id: steric-effects
+    title: 空间效应
+    note: 位阻常常比电子效应更能决定产物
+    domain: organic
+
+  - id: nucleophile-electrophile
+    title: 亲核体与亲电体
+    note: 谁给电子、谁缺电子
+    domain: organic
+
+  # ── 中间体与稳定性 ──────────────────────────────────────────────────
+  - id: carbocation-stability
+    title: 碳正离子稳定性
+    note: 叔 > 仲 > 伯；邻位杂原子可稳定
+    domain: organic
+    prerequisites: [electronic-effects, steric-effects]
+
+  - id: carbocation-rearrangement
+    title: 碳正离子重排（1,2-迁移）
+    note: 迁移方向由「迁移后正离子是否更稳定」决定，不由基团大小决定
+    domain: organic
+    prerequisites: [carbocation-stability]
+
+  - id: radical-chemistry
+    title: 自由基反应
+    note: 与离子型过程取向常常相反，先判断中间体是自由基还是正离子
+    domain: organic
+    prerequisites: [electronic-effects]
+
+  # ── 共轭与周环 ──────────────────────────────────────────────────────
+  - id: conjugation
+    title: 共轭体系与电子离域
+    note: 共轭会改变反应位点与产物稳定性
+    domain: organic
+    prerequisites: [electronic-effects]
+
+  - id: kinetic-thermodynamic-control
+    title: 动力学控制 vs 热力学控制
+    note: 先问「这个反应可逆吗」—— 不可逆看速率，可逆看稳定性
+    domain: organic
+    prerequisites: [conjugation]
+
+  - id: pericyclic
+    title: 周环反应
+    note: 一步协同、无中间体；判断选择性要看轨道重叠而非位阻
+    domain: organic
+    prerequisites: [conjugation]
+
+  - id: aromaticity
+    title: 芳香性与休克尔规则
+    note: 环状、共轭、平面、4n+2
+    domain: organic
+    prerequisites: [conjugation]
+
+  - id: electrophilic-aromatic-substitution
+    title: 芳香亲电取代与定位效应
+    note: 多个取代基时，由最强活化基主导
+    domain: organic
+    prerequisites: [aromaticity]
+
+  # ── 取代与消除 ──────────────────────────────────────────────────────
+  - id: sn1-sn2
+    title: 亲核取代（SN1 / SN2）
+    note: 底物结构、亲核试剂、溶剂三者共同决定走哪条
+    domain: organic
+    prerequisites: [nucleophile-electrophile, carbocation-stability]
+
+  - id: elimination
+    title: 消除反应（E1 / E2）
+    note: E2 要求反式共平面
+    domain: organic
+    prerequisites: [sn1-sn2]
+
+  # ── 羰基化学 ────────────────────────────────────────────────────────
+  - id: carbonyl-addition
+    title: 羰基的亲核加成
+    note: 羰基碳是亲电中心
+    domain: organic
+    prerequisites: [nucleophile-electrophile]
+
+  - id: enolate-chemistry
+    title: 烯醇负离子
+    note: 有 α-氢才有的路径 —— 没有 α-氢就得换赛道
+    domain: organic
+    prerequisites: [carbonyl-addition]
+
+  - id: aldol-condensation
+    title: 羟醛缩合
+    note: 交叉缩合能否做干净，先看「谁有 α-氢」
+    domain: organic
+    prerequisites: [enolate-chemistry]
+
+  - id: cannizzaro
+    title: 坎尼扎罗歧化
+    note: 无 α-氢的醛在浓碱中自身氧化还原
+    domain: organic
+    prerequisites: [carbonyl-addition]
+
+  - id: soft-hard-nucleophile
+    title: 软硬亲核体
+    note: 硬亲核体走羰基，软亲核体走共轭位点
+    domain: organic
+    prerequisites: [conjugation, nucleophile-electrophile]
+
+  # ── 加成方式 ────────────────────────────────────────────────────────
+  - id: hydroboration
+    title: 硼氢化-氧化
+    note: 协同顺式加成，硼进位阻小的一端 —— 与酸催化水合取向相反
+    domain: organic
+    prerequisites: [steric-effects]
+    related: [carbocation-stability]

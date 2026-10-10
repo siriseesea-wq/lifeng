@@ -1,6 +1,9 @@
 id: p002
 domain: organic
 type: reasoning
+concepts:
+  - conjugation
+  - kinetic-thermodynamic-control
 skeleton_source: ai
 
 statement: |

@@ -1,6 +1,10 @@
 id: p004
 domain: organic
 type: reasoning
+concepts:
+  - aldol-condensation
+  - enolate-chemistry
+  - carbonyl-addition
 skeleton_source: ai
 
 statement: |

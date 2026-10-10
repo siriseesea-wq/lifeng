@@ -17,6 +17,8 @@ import streamlit as st
 from lifeng.hint_engine import DeepSeekClient, HintError
 from lifeng.models import SkeletonError, load_problems
 from lifeng.views import (
+    render_graph,
+    render_profile,
     render_progress,
     render_psych,
     render_review,
@@ -26,9 +28,11 @@ from lifeng.views import (
 
 PROBLEMS_DIR = Path(os.environ.get("LIFENG_PROBLEMS", "problems"))
 DB_PATH = Path(os.environ.get("LIFENG_DB", "store.db"))
+CONCEPTS_PATH = Path(os.environ.get("LIFENG_CONCEPTS", "concepts.yaml"))
+MATERIALS_DIR = Path(os.environ.get("LIFENG_MATERIALS", "materials"))
 
 # 今日排在第一位：系统主导，学生不必先做「今天做什么」这个决定。
-PAGES = ("今日", "训练", "复习", "进度", "心理")
+PAGES = ("今日", "训练", "复习", "进度", "图谱", "画像", "心理")
 MODE_LABELS = {"hint": "实验组（可请求提示）", "baseline": "基线组（无提示）"}
 
 
@@ -68,6 +72,8 @@ def main() -> None:
         return
 
     st.session_state.setdefault("problems_dir", str(PROBLEMS_DIR))
+    st.session_state.setdefault("materials_dir", str(MATERIALS_DIR))
+    st.session_state.setdefault("concepts_path", str(CONCEPTS_PATH))
     _apply_pending_navigation()
 
     st.title("砺锋 · 化学竞赛引导")
@@ -121,6 +127,20 @@ def main() -> None:
         render_review(student_code=student_code, db_path=DB_PATH)
     elif page == "进度":
         render_progress(student_code=student_code, db_path=DB_PATH)
+    elif page == "图谱":
+        render_graph(
+            student_code=student_code,
+            db_path=DB_PATH,
+            concepts_path=CONCEPTS_PATH,
+            problems_dir=PROBLEMS_DIR,
+        )
+    elif page == "画像":
+        render_profile(
+            student_code=student_code,
+            db_path=DB_PATH,
+            concepts_path=CONCEPTS_PATH,
+            problems_dir=PROBLEMS_DIR,
+        )
     else:
         render_psych()
 

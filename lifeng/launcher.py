@@ -44,6 +44,18 @@ def _problems_dir(root: Path) -> Path:
     return root / "problems"
 
 
+def _cwd_or_bundled(root: Path, name: str) -> Path:
+    """与题库同样的规则：运行目录下的优先，否则用打包内置的。
+
+    知识点图和资料库都要走这条路径 —— 少了它们，「图谱」「画像」
+    两个页面和训练页的「查资料」在打包版里会失效。
+    """
+    cwd_path = Path.cwd() / name
+    if cwd_path.exists():
+        return cwd_path
+    return root / name
+
+
 def _ensure_streamlit_credentials() -> bool:
     """跳过 Streamlit 首次运行的邮箱询问。
 
@@ -93,6 +105,10 @@ def main() -> int:
 
     problems = _problems_dir(root)
     os.environ.setdefault("LIFENG_PROBLEMS", str(problems))
+    # 知识点图与资料库同样要指向可用位置，否则打包版里
+    # 「图谱」「画像」和「查资料」会静默失效
+    os.environ.setdefault("LIFENG_CONCEPTS", str(_cwd_or_bundled(root, "concepts.yaml")))
+    os.environ.setdefault("LIFENG_MATERIALS", str(_cwd_or_bundled(root, "materials")))
     # 数据落在**运行目录**，而不是解包临时目录 —— 否则每次启动都丢记录
     os.environ.setdefault("LIFENG_DB", str(Path.cwd() / "store.db"))
 

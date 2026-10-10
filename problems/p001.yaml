@@ -1,6 +1,9 @@
 id: p001
 domain: organic
 type: reasoning
+concepts:
+  - carbocation-rearrangement
+  - carbocation-stability
 
 statement: |
   2,3-二甲基-2,3-丁二醇（频哪醇，pinacol）在稀硫酸中加热，

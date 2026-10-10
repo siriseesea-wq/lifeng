@@ -1,6 +1,10 @@
 id: p010
 domain: organic
 type: reasoning
+concepts:
+  - soft-hard-nucleophile
+  - conjugation
+  - carbonyl-addition
 skeleton_source: ai
 
 statement: |

@@ -1,6 +1,9 @@
 id: p006
 domain: organic
 type: reasoning
+concepts:
+  - pericyclic
+  - conjugation
 skeleton_source: ai
 
 statement: |
