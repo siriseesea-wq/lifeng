@@ -63,24 +63,32 @@ def request_hint(
     store: Store,
     session_id: int,
 ) -> tuple[str, dict]:
-    """请求一层提示：生成 → 防泄漏 → 落库。
+    """请求一层提示：生成 → 防泄漏 → 挂到对应的学生尝试上。
+
+    **一次学生尝试 = 一行**，提示是这次尝试「获得的帮助」，不另起一行。
+    否则 T9 无法按卡点统计「突破依赖第几层提示」（协议 §6.2 M2）。
 
     返回 ``(提示文本, 记录信息)``。抽成纯函数是为了让核心交互
     可以在不启动 Streamlit 的情况下验证。
     """
-    result = guard_hint(problem, attempt_text, level, client=client)
+    target = store.latest_attempt_id(session_id)
 
-    attempt_id = store.log_attempt(
-        session_id,
-        attempt_text,
-        level_requested=level,
-        hint_text=result.text,
-        # 走掩码兜底 = LLM 生成失败，记为一次泄漏事件供实验者关注
-        leaked=result.degraded,
-    )
+    if target is None:
+        target = store.log_attempt(session_id, attempt_text, level_requested=0)
+    elif store.get_attempt(target)["attempt_text"].strip() != attempt_text.strip():
+        # 学生改了文本框但直接点了「请求提示」——先把这次尝试记下来，避免丢失
+        target = store.log_attempt(session_id, attempt_text, level_requested=0)
+    elif store.get_attempt(target)["hint_text"] is not None:
+        # 协议 §4：每层提示后必须先提交一次新尝试
+        raise HintError(
+            "这次尝试已经用过提示了。请先写下新的进展或新的卡点，再请求下一层。"
+        )
+
+    result = guard_hint(problem, attempt_text, level, client=client)
+    store.attach_hint(target, level, result.text, leaked=result.degraded)
 
     return result.text, {
-        "attempt_id": attempt_id,
+        "attempt_id": target,
         "generations": result.attempts,
         "degraded": result.degraded,
         "masked_terms": result.masked_terms,
