@@ -25,6 +25,7 @@ from pathlib import Path
 
 import yaml
 
+from lifeng import prompts
 from lifeng.leak_check import skeleton_leaks_answer
 from lifeng.models import (
     MIN_PITFALLS,
@@ -36,58 +37,6 @@ from lifeng.models import (
 
 DEFAULT_PROBLEMS_DIR = Path("problems")
 DEFAULT_MAX_ATTEMPTS = 3
-
-_SCHEMA_SPEC = """\
-你必须输出一份 YAML，字段与含义如下（**照搬这个模板，不要增删字段**）：
-
-```yaml
-id: <题号，如 p002>
-domain: organic            # 只能是 organic/physical/structural/inorganic/analytical
-type: reasoning            # 只能是 reasoning；不要出记忆型题
-skeleton_source: ai        # 固定写 ai
-
-statement: |
-  题干。要像竞赛真题，给足已知条件，问一个明确的问题。
-
-answer: |
-  参考答案与简要机理说明。
-
-key_quantities:            # 【最关键】只放「最终答案」，绝不放中间机理
-  - 最终产物名
-  - 终产物的系统命名
-
-skeleton:
-  insight: |
-    一两句话概括这道题的关键洞察。它是提示的天花板。
-
-  pitfalls:                # 至少 3 个
-    - trigger: |
-        什么表现说明学生卡在这里。
-      next_step: |
-        越过该卡点的下一步动作。必须**可观察**（能看出学生做没做到），
-        不要写「理解……」这类无法判定的说法。
-      common_wrong_path: |
-        学生最常走错的岔路。
-```
-
-## 两条铁律
-
-**铁律 1 —— `key_quantities` 只放最终答案，不放中间机理。**
-
-机理正是要引导学生自己走出来的内容。若把「1,2-迁移」「碳正离子」这类
-机理词写进 key_quantities，前 3 层提示将无法推进（校验器会把有效引导
-全部误杀）。只放终产物名与它的系统命名。
-
-**铁律 2 —— `insight` 与 `pitfalls` 里绝不能出现 `key_quantities` 中的词。**
-
-骨架会被注入提示生成器的 prompt。骨架里若写了答案，
-「模型看不到答案就说不出答案」这条结构性防线就失效了。
-
-## 输出格式
-
-只输出 YAML 本体。不要加解释、不要加 ```yaml 代码围栏之外的内容。
-"""
-
 
 class GenerationError(RuntimeError):
     """多次重试后仍无法生成合格题目。"""
@@ -105,11 +54,23 @@ class GenerationResult:
 # --------------------------------------------------------------------------
 
 
-def build_system_prompt() -> str:
-    return (
-        "你是化学竞赛命题专家，负责出有机化学机理推理题并标注解题骨架。\n"
-        "你输出的骨架会被用作苏格拉底式引导提示的约束，因此必须准确、可观察。\n\n"
-        + _SCHEMA_SPEC
+def build_system_prompt(
+    *,
+    problem_id: str = "p001",
+    domain: str = "organic",
+    concept_ids: list[tuple[str, str]] | None = None,
+    include_fewshot: bool = True,
+) -> str:
+    """出题的 system prompt。
+
+    实际文本在 :mod:`lifeng.prompts` —— 那里是**唯一**需要审阅与调优的地方。
+    """
+    return prompts.generation_system_prompt(
+        problem_id=problem_id,
+        domain=domain,
+        concept_ids=concept_ids or [],
+        min_pitfalls=MIN_PITFALLS,
+        include_fewshot=include_fewshot,
     )
 
 
@@ -117,20 +78,20 @@ def build_user_prompt(
     *,
     problem_id: str,
     domain: str,
+    difficulty: str = prompts.DEFAULT_DIFFICULTY,
     existing_statements: tuple[str, ...] = (),
+    covered_concepts: tuple[str, ...] = (),
     feedback: str | None = None,
 ) -> str:
-    parts = [
-        f"请出一道**{domain}**方向的化学竞赛推理题，题号 {problem_id}。",
-        f"`skeleton.pitfalls` 至少 {MIN_PITFALLS} 个。",
-    ]
-    if existing_statements:
-        parts.append("\n**不要与下列已有题目重复**（题干摘要）：")
-        parts.extend(f"- {s[:60]}" for s in existing_statements[:10])
-    if feedback:
-        parts.append(f"\n【上一次生成不合格，请修正后重新输出】\n{feedback}")
-    parts.append("\n现在只输出 YAML。")
-    return "\n".join(parts)
+    """出题的 user prompt。"""
+    return prompts.generation_user_prompt(
+        problem_id=problem_id,
+        domain=domain,
+        difficulty=difficulty,
+        existing_statements=existing_statements,
+        covered_concepts=covered_concepts,
+        feedback=feedback,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -151,8 +112,15 @@ def extract_yaml(text: str) -> str:
     return text.strip()
 
 
-def validate_candidate(problem: Problem) -> list[str]:
-    """返回不合格的原因列表；空列表表示通过。"""
+def validate_candidate(
+    problem: Problem, *, known_concepts: set[str] | None = None
+) -> list[str]:
+    """返回不合格的原因列表；空列表表示通过。
+
+    ``known_concepts`` 给出时，会检查题目标注的知识点是否都在图谱里 ——
+    写错的 id 不会让程序崩，只会让图谱上少一条连线、
+    画像少一个维度，属于**静默失效**，必须显式拦截。
+    """
     problems: list[str] = []
 
     if problem.type != "reasoning":
@@ -170,6 +138,14 @@ def validate_candidate(problem: Problem) -> list[str]:
 
     if problem.skeleton and len(problem.skeleton.pitfalls) < MIN_PITFALLS:
         problems.append(f"`pitfalls` 至少需要 {MIN_PITFALLS} 个")
+
+    if known_concepts is not None and problem.concepts:
+        unknown = sorted(set(problem.concepts) - known_concepts)
+        if unknown:
+            problems.append(
+                f"`concepts` 里有图谱中不存在的 id：{unknown}。"
+                "请从给定的词表里选，或改用其它知识点"
+            )
 
     return problems
 
@@ -207,7 +183,10 @@ def generate_problem(
     *,
     problem_id: str,
     domain: str = "organic",
+    difficulty: str = prompts.DEFAULT_DIFFICULTY,
     existing_statements: tuple[str, ...] = (),
+    covered_concepts: tuple[str, ...] = (),
+    concept_ids: list[tuple[str, str]] | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> Problem:
     """生成一道题并通过全部校验；失败时带反馈重试。"""
@@ -216,7 +195,11 @@ def generate_problem(
     if max_attempts < 1:
         raise ValueError("max_attempts 至少为 1")
 
-    system = build_system_prompt()
+    concept_ids = concept_ids or []
+    system = build_system_prompt(
+        problem_id=problem_id, domain=domain, concept_ids=concept_ids
+    )
+    known_concepts = {cid for cid, _ in concept_ids}
     feedback: str | None = None
     last_error = "（无）"
 
@@ -224,7 +207,9 @@ def generate_problem(
         user = build_user_prompt(
             problem_id=problem_id,
             domain=domain,
+            difficulty=difficulty,
             existing_statements=existing_statements,
+            covered_concepts=covered_concepts,
             feedback=feedback,
         )
         text = client.complete(system, user)
@@ -236,7 +221,7 @@ def generate_problem(
             feedback = f"YAML 不合规：{last_error}"
             continue
 
-        issues = validate_candidate(problem)
+        issues = validate_candidate(problem, known_concepts=known_concepts)
         if not issues:
             # 题号以调用方指定的为准。模型只是**被建议**用这个 id，
             # 它可能回显错、编造或重复 —— 而文件命名与去重都依赖这个 id，
@@ -258,6 +243,7 @@ def dump_problem(problem: Problem) -> str:
         "domain": problem.domain,
         "type": problem.type,
         "skeleton_source": problem.skeleton_source,
+        "concepts": list(problem.concepts),
         "statement": problem.statement,
         "answer": problem.answer,
         "key_quantities": list(problem.key_quantities),
@@ -297,19 +283,35 @@ def generate_batch(
     *,
     directory: str | Path = DEFAULT_PROBLEMS_DIR,
     domain: str = "organic",
+    difficulty: str = prompts.DEFAULT_DIFFICULTY,
+    concepts_path: str | Path | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> list[GenerationResult]:
     """连出 ``count`` 道题并写盘。单题失败不中断整批。"""
     directory = Path(directory)
     results: list[GenerationResult] = []
     statements: list[str] = []
+    covered: list[str] = []
 
-    # 收录已有题干，避免重复出题
+    # 知识点词表：给出后，模型才会用**我们图谱里的** id 而不是自己编。
+    concept_ids: list[tuple[str, str]] = []
+    if concepts_path is not None:
+        from lifeng.concepts import ConceptError, ConceptGraph
+
+        try:
+            graph = ConceptGraph.load(concepts_path)
+            concept_ids = [(c.id, c.title) for c in graph.concepts.values()]
+        except ConceptError:
+            concept_ids = []
+
+    # 收录已有题干与已覆盖知识点：前者避免重复出题，后者用于**考点轮转**
     if directory.is_dir():
         from lifeng.models import load_problems
 
         try:
-            statements.extend(p.statement for p in load_problems(directory))
+            existing = load_problems(directory)
+            statements.extend(p.statement for p in existing)
+            covered.extend(c for p in existing for c in p.concepts)
         except SkeletonError:
             pass  # 题库里已有不合格文件时不阻断生成
 
@@ -319,11 +321,15 @@ def generate_batch(
             client,
             problem_id=problem_id,
             domain=domain,
+            difficulty=difficulty,
             existing_statements=tuple(statements),
+            covered_concepts=tuple(covered),
+            concept_ids=concept_ids,
             max_attempts=max_attempts,
         )
         path = save_problem(problem, directory)
         statements.append(problem.statement)
+        covered.extend(problem.concepts)
         results.append(GenerationResult(problem=problem, path=path, attempts=1))
 
     return results
@@ -346,6 +352,17 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="用 LLM 生成题目与骨架")
     parser.add_argument("--count", type=int, default=5, help="生成几道")
     parser.add_argument("--domain", default="organic", choices=VALID_DOMAINS)
+    parser.add_argument(
+        "--difficulty",
+        default=prompts.DEFAULT_DIFFICULTY,
+        choices=list(prompts.DIFFICULTY_LEVELS),
+        help="命题深度：basic 初赛 / standard 复赛 / advanced 决赛",
+    )
+    parser.add_argument(
+        "--concepts",
+        default="concepts.yaml",
+        help="知识点图谱路径；给了它模型才会用图谱里的 id 而不是自己编",
+    )
     parser.add_argument("--dir", default=str(DEFAULT_PROBLEMS_DIR))
     args = parser.parse_args(argv[1:])
 
@@ -355,10 +372,22 @@ def main(argv: list[str]) -> int:
         print(f"[FAIL] {exc}")
         return 1
 
-    print(f"[生成] {args.count} 道 {args.domain} 推理题 → {args.dir}")
+    concepts = Path(args.concepts)
+    if not concepts.is_file():
+        print(f"[警告] 找不到知识点图谱 {concepts}，生成的题将没有 concepts 标注，"
+              "图谱与画像功能用不上它们")
+
+    print(f"[生成] {args.count} 道 {args.domain} 推理题（{args.difficulty}）→ {args.dir}")
     for i in range(args.count):
         try:
-            results = generate_batch(client, 1, directory=args.dir, domain=args.domain)
+            results = generate_batch(
+                client,
+                1,
+                directory=args.dir,
+                domain=args.domain,
+                difficulty=args.difficulty,
+                concepts_path=concepts if concepts.is_file() else None,
+            )
         except GenerationError as exc:
             print(f"[FAIL] 第 {i + 1} 道：{exc}")
             continue

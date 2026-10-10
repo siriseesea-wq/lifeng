@@ -41,6 +41,7 @@ hiddenimports = [
     "lifeng.review",
     "lifeng.mastery",
     "lifeng.concepts",
+    "lifeng.prompts",
     "lifeng.profile",
     "lifeng.materials",
     "lifeng.planner",

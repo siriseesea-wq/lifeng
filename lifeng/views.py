@@ -22,8 +22,10 @@ from pathlib import Path
 import altair as alt
 import streamlit as st
 
-from lifeng import theme
+from lifeng import prompts, theme
 from lifeng.concepts import ConceptError, ConceptGraph
+from lifeng.generator import GenerationError, generate_batch
+from lifeng.models import MIN_PITFALLS, VALID_DOMAINS
 from lifeng.hint_engine import HintError
 from lifeng.leak_check import guard_hint, skeleton_leaks_answer
 from lifeng.materials import load_materials, retrieve
@@ -980,3 +982,163 @@ def render_profile(
             "比「做对没做对」更有用的信号：如果总是卡在第 1 类，"
             "说明问题在**方向**；总卡在最后一类，说明在**收尾**。"
         )
+
+
+# --------------------------------------------------------------------------
+# 出题
+# --------------------------------------------------------------------------
+
+
+def render_generate(
+    *,
+    db_path: Path,
+    problems_dir: Path,
+    concepts_path: Path,
+    client,
+    client_error: str | None = None,
+) -> None:
+    """AI 出题。
+
+    本项目**不预置题库** —— 题目由 AI 生成，落在本地 ``problems/`` 目录，
+    也就是"本地存储 + AI 出题"这个设计里生成的那一端。
+
+    生成后立刻做三件事，任何一件不过就不写盘：
+    1. schema 校验
+    2. 骨架不得含答案关键量（否则防泄漏的结构性防线失效）
+    3. ``concepts`` 必须是图谱里真实存在的 id（否则图谱/画像静默失效）
+    """
+    theme.hero(
+        "出题",
+        "题库由 AI 生成，存在本机 —— 不需要预先准备题目",
+        compact=True,
+    )
+
+    if client is None:
+        theme.empty_state(
+            "需要先配置模型密钥",
+            f"{client_error or '未找到密钥'}<br><br>"
+            "在环境变量里设置 <code>DEEPSEEK_API_KEY</code> 后重启即可。",
+        )
+        return
+
+    with Store(db_path) as store:
+        pass  # 仅为保持与其他页面一致的存储初始化时机
+
+    try:
+        existing = load_problems(problems_dir)
+    except Exception:  # noqa: BLE001
+        existing = []
+
+    graph = None
+    if concepts_path.is_file():
+        try:
+            graph = ConceptGraph.load(concepts_path)
+        except ConceptError:
+            graph = None
+    if graph is None:
+        st.warning(
+            f"找不到知识点图谱 {concepts_path} —— 生成的题将没有知识点标注，"
+            "「图谱」与「画像」两页用不上它们。"
+        )
+
+    theme.stats(
+        [
+            ("已有题目", str(len(existing)), "brand", "本地存储"),
+            ("知识点", str(len(graph)) if graph else "—", "", "图谱规模"),
+            ("出口", str(problems_dir), "", "生成的文件落在这里"),
+        ]
+    )
+
+    theme.section("生成新题")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        count = st.number_input("生成几道", min_value=1, max_value=10, value=2)
+    with c2:
+        difficulty = st.selectbox(
+            "难度",
+            options=list(prompts.DIFFICULTY_LEVELS),
+            format_func=lambda k: {
+                "basic": "初赛",
+                "standard": "复赛",
+                "advanced": "决赛",
+            }.get(k, k),
+            index=1,
+        )
+    with c3:
+        domain = st.selectbox("方向", options=list(VALID_DOMAINS), index=0)
+
+    st.caption(
+        "每道题都会做三道校验：schema、骨架不含答案、知识点 id 真实存在。"
+        "任何一道不过就带反馈重试，重试仍不过则跳过，不会写进题库。"
+    )
+
+    if st.button("开始生成", type="primary"):
+        concept_ids = (
+            [(c.id, c.title) for c in graph.concepts.values()] if graph else []
+        )
+        progress = st.progress(0.0, text="准备中…")
+        produced: list[str] = []
+        failures: list[str] = []
+
+        for i in range(int(count)):
+            progress.progress(i / int(count), text=f"正在生成第 {i + 1} / {count} 道…")
+            try:
+                results = generate_batch(
+                    client,
+                    1,
+                    directory=problems_dir,
+                    domain=domain,
+                    difficulty=difficulty,
+                    concepts_path=concepts_path if graph else None,
+                )
+            except GenerationError as exc:
+                failures.append(f"第 {i + 1} 道：{exc}")
+                continue
+            for r in results:
+                n_pitfalls = len(r.problem.skeleton.pitfalls) if r.problem.skeleton else 0
+                produced.append(
+                    f"{r.problem.id}（卡点 {n_pitfalls}｜知识点 "
+                    f"{'、'.join(r.problem.concepts) or '无'}）"
+                )
+
+        progress.progress(1.0, text="完成")
+
+        if produced:
+            st.success(f"已生成 {len(produced)} 道，写入 {problems_dir}：")
+            for line in produced:
+                st.markdown(f"- {line}")
+            st.info("新题会出现在「训练」页的题号列表里。刷新页面即可看到。")
+
+        for failure in failures:
+            st.warning(failure)
+
+        if not produced and not failures:
+            st.warning("没有产出任何题目。")
+
+    # ── 给已有题目补骨架 ────────────────────────────────────────────
+    with st.expander("已有题目？让 AI 帮你补骨架"):
+        st.caption(
+            "老师手上有题干和答案、但没有骨架时用这个。"
+            "骨架是引导提示的天花板，没有骨架的题无法进入引导流程。"
+        )
+        statement = st.text_area("题干", height=120, key="sk_statement")
+        answer = st.text_area("参考答案", height=90, key="sk_answer")
+        if st.button("生成骨架", key="sk_go"):
+            if not statement.strip() or not answer.strip():
+                st.warning("题干与答案都要填。")
+            else:
+                try:
+                    raw = client.complete(
+                        prompts.skeleton_system_prompt(min_pitfalls=MIN_PITFALLS),
+                        prompts.skeleton_user_prompt(
+                            statement=statement,
+                            answer=answer,
+                            min_pitfalls=MIN_PITFALLS,
+                        ),
+                    )
+                    st.code(raw, language="yaml")
+                    st.caption(
+                        "把这段贴进对应题目的 YAML 里。写盘前仍会走同一套校验。"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"生成失败：{exc}")

@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 from typing import Protocol
 
+from lifeng import prompts
 from lifeng.models import Pitfall, Problem, Skeleton
 
 #: 允许的层级。4 表示给出答案与复盘。
@@ -46,36 +47,14 @@ class LLMClient(Protocol):
 # Prompt 构造（纯函数，可离线测试）
 # --------------------------------------------------------------------------
 
-_LEVEL_DIRECTIVE: dict[int, str] = {
-    1: (
-        "第 1 层 —— 只问方向。用一个简短的问题，把学生的注意力引向正确的思考维度。"
-        "禁止说出任何具体基团、步骤、中间体或产物名称。"
-    ),
-    2: (
-        "第 2 层 —— 给具体提示。明确指出学生应当检查哪个位置或哪一条性质，"
-        "并点出他可能正走上的歧路。仍然禁止说出结论或产物。"
-    ),
-    3: (
-        "第 3 层 —— 给更具体的提示。把下一步动作说到可以直接执行的程度，"
-        "但**仍然不得说出最终产物或答案**。"
-    ),
-    4: (
-        "第 4 层 —— 给出完整答案与复盘。说明最终答案与机理，"
-        "并指出学生此前卡在哪一步、为什么会卡在那里。"
-    ),
-}
-
-_SYSTEM_HEADER = """你是化学竞赛的引导教练，使用苏格拉底式提问帮助学生自己走出来。
-
-铁律：
-- 学生需要的是「被引导着想到」，不是「被告知答案」。
-- 不要复述题目，不要写长篇讲解，不要罗列多个可能性。
-- 只输出提示本身，不要任何前缀、标题或解释。
-"""
-
 
 def _render_pitfalls(skeleton: Skeleton, level: int) -> str:
-    """按层级渐进披露卡点信息（结构性防泄漏的关键）。"""
+    """按层级**渐进披露**卡点信息 —— 这是 C1 结构性防泄漏的关键。
+
+    第 1 层只给「学生卡住时的表现」，让模型知道他在哪卡住，
+    但不知道正确的下一步是什么；到第 3 层才把 ``next_step`` 交出去。
+    披露得越少，模型能泄露的就越少。
+    """
     lines: list[str] = []
     for i, pitfall in enumerate(skeleton.pitfalls, start=1):
         lines.append(f"卡点 {i}")
@@ -87,35 +66,51 @@ def _render_pitfalls(skeleton: Skeleton, level: int) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(problem: Problem, level: int) -> str:
+def build_system_prompt(
+    problem: Problem, level: int, *, previous_hints: tuple[str, ...] = ()
+) -> str:
     """构造 system prompt。
 
-    第 1~3 层**绝不包含 ``answer``**；第 4 层必须包含，否则无法给出答案。
+    第 1~3 层**绝不包含** ``answer`` —— 这不是靠嘱咐模型"别说"，
+    而是那个字符串根本不在 prompt 里。第 4 层必须包含，否则给不出答案。
     """
     if level not in VALID_LEVELS:
         raise HintError(f"层级必须是 {VALID_LEVELS} 之一，收到 {level!r}")
     if problem.skeleton is None:
         raise HintError(f"题目 {problem.id} 没有骨架，无法生成提示")
 
-    parts = [_SYSTEM_HEADER, f"\n【本题的关键洞察】\n{problem.skeleton.insight}\n"]
-    parts.append(f"\n【本题的卡点】\n{_render_pitfalls(problem.skeleton, level)}\n")
-    parts.append(f"\n【本次要求】\n{_LEVEL_DIRECTIVE[level]}\n")
-
-    if level == 4:
-        parts.append(f"\n【参考答案（仅供本层使用）】\n{problem.answer}\n")
-
+    parts = [
+        prompts.hint_system_prompt(
+            level=level,
+            insight=problem.skeleton.insight,
+            pitfalls_text=_render_pitfalls(problem.skeleton, level),
+            answer=problem.answer if level == 4 else None,
+        )
+    ]
+    if previous_hints:
+        # 不给的话模型不知道上几层说过什么，会原样重复 ——
+        # 学生看到的是「又说了一遍」，而不是往前推进一步。
+        parts.append("\n\n## 你已经给过这些提示（**换一种说法，不要重复**）\n\n")
+        for i, hint in enumerate(previous_hints, start=1):
+            parts.append(f"{i}. {hint.strip()}\n")
     return "".join(parts)
 
 
-def build_user_prompt(problem: Problem, attempt_text: str, level: int) -> str:
+def build_user_prompt(
+    problem: Problem,
+    attempt_text: str,
+    level: int,
+    *,
+    previous_hints: tuple[str, ...] = (),
+) -> str:
     """构造 user prompt。同样不含答案（第 4 层由 system prompt 提供）。"""
     if level not in VALID_LEVELS:
         raise HintError(f"层级必须是 {VALID_LEVELS} 之一，收到 {level!r}")
-
-    return (
-        f"题目：\n{problem.statement}\n\n"
-        f"学生当前的尝试或卡住的地方：\n{attempt_text}\n\n"
-        f"请给出第 {level} 层提示。"
+    return prompts.hint_user_prompt(
+        statement=problem.statement,
+        attempt_text=attempt_text,
+        level=level,
+        previous_hints=previous_hints,
     )
 
 

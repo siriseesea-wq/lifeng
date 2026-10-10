@@ -135,8 +135,12 @@ class TestGenerateProblem:
         assert problem.id == "p900"
         assert len(client.users) == 2
         # 第二次必须带上具体问题，否则模型无从修正
-        assert "示例酮" in client.users[1]
-        assert "不合格" in client.users[1]
+        # 断言语义而不是措辞：重试时必须把**校验器给出的具体问题**带回去，
+        # 否则模型不知道要改什么，只会重出同一道题。
+        retry = client.users[1]
+        assert "示例酮" in retry, "没有把违规内容告诉模型"
+        assert "骨架" in retry, "没有说明是哪一类问题"
+        assert "修正" in retry or "重新输出" in retry, "没有要求它改写"
 
     def test_gives_up_after_max_attempts(self) -> None:
         leaky = VALID_YAML.replace("关键在于比较迁移前后的中间体稳定性。", "得到示例酮。")
@@ -217,4 +221,6 @@ class TestGenerateBatch:
         generate_batch(client, 1, directory=tmp_path)
 
         # 第二次生成时，已有题干应作为「不要重复」的提示传下去
-        assert "不要与下列已有题目重复" in client.users[0]
+        # 已有题干必须出现在 prompt 里，否则去重形同虚设
+        assert "已有题目" in client.users[0]
+        assert "某化合物在酸性条件下发生重排" in client.users[0]

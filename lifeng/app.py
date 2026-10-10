@@ -18,6 +18,7 @@ from lifeng import theme
 from lifeng.hint_engine import DeepSeekClient, HintError
 from lifeng.models import SkeletonError, load_problems
 from lifeng.views import (
+    render_generate,
     render_graph,
     render_profile,
     render_progress,
@@ -33,7 +34,7 @@ CONCEPTS_PATH = Path(os.environ.get("LIFENG_CONCEPTS", "concepts.yaml"))
 MATERIALS_DIR = Path(os.environ.get("LIFENG_MATERIALS", "materials"))
 
 # 今日排在第一位：系统主导，学生不必先做「今天做什么」这个决定。
-PAGES = ("今日", "训练", "复习", "进度", "图谱", "画像", "心理")
+PAGES = ("今日", "训练", "复习", "进度", "图谱", "画像", "心理", "出题")
 MODE_LABELS = {"hint": "实验组（可请求提示）", "baseline": "基线组（无提示）"}
 
 
@@ -68,13 +69,18 @@ def main() -> None:
         return
 
     hintable = [p for p in problems if p.hintable]
-    if not hintable:
-        st.error("没有可引导的题目（需要 type=reasoning 且已标注 skeleton）。")
-        return
 
     st.session_state.setdefault("problems_dir", str(PROBLEMS_DIR))
     st.session_state.setdefault("materials_dir", str(MATERIALS_DIR))
     st.session_state.setdefault("concepts_path", str(CONCEPTS_PATH))
+    # 题库为空时直接落到「出题」页。
+    #
+    # 这里曾经是 `if not hintable: st.error(...); return` —— 那等于：
+    # 没有题目就用不了应用，而生成题目的页面又进不去。**空题库时应用是死的。**
+    # 本项目不预置题库，所以这条路径必须是通的。
+    if not hintable:
+        st.session_state.setdefault("nav", "出题")
+
     theme.inject()
     _apply_pending_navigation()
 
@@ -101,7 +107,10 @@ def main() -> None:
         page = st.session_state.get("nav", PAGES[0])
 
         mode = "hint"
-        problem_id = hintable[0].id
+        # 空题库时不能索引 —— 这是「不预置题库」这条设计的必然边界情况
+        problem_id = hintable[0].id if hintable else ""
+        client = None
+        client_error: str | None = None
         if page == "训练":
             mode = st.radio(
                 "模式",
@@ -119,23 +128,32 @@ def main() -> None:
                 with st.expander("如何配置"):
                     st.code("export DEEPSEEK_API_KEY=sk-...", language="bash")
                     st.caption(err or "")
-        else:
-            client = None
-        st.caption(f"题库：{PROBLEMS_DIR}　共 {len(hintable)} 题")
+        elif page == "出题":
+            client, err = _client()
+            client_error = err
+        # 侧栏窄，长路径会把「题库」两个字拆行 —— 只显示数量，路径放 tooltip
+        st.caption(f"题库 {len(hintable)} 题")
+        st.caption(str(PROBLEMS_DIR))
 
     if page == "今日":
         render_today(
             student_code=student_code, db_path=DB_PATH, problems_dir=PROBLEMS_DIR
         )
     elif page == "训练":
-        render_train(
-            hintable,
-            student_code=student_code,
-            mode=mode,
-            problem_id=problem_id,
-            db_path=DB_PATH,
-            client=client,
-        )
+        if not hintable:
+            theme.empty_state(
+                "还没有可引导的题目",
+                "先去「出题」页生成几道 —— 本项目不预置题库。",
+            )
+        else:
+            render_train(
+                hintable,
+                student_code=student_code,
+                mode=mode,
+                problem_id=problem_id,
+                db_path=DB_PATH,
+                client=client,
+            )
     elif page == "复习":
         render_review(student_code=student_code, db_path=DB_PATH)
     elif page == "进度":
@@ -153,6 +171,14 @@ def main() -> None:
             db_path=DB_PATH,
             concepts_path=CONCEPTS_PATH,
             problems_dir=PROBLEMS_DIR,
+        )
+    elif page == "出题":
+        render_generate(
+            db_path=DB_PATH,
+            problems_dir=PROBLEMS_DIR,
+            concepts_path=CONCEPTS_PATH,
+            client=client,
+            client_error=client_error,
         )
     else:
         render_psych()
