@@ -53,6 +53,9 @@ lifeng/
   hint_engine.py  四层提示生成 + 结构性防泄漏（T3）
   leak_check.py   答案关键量黑名单校验（T4）
   app.py          Streamlit 学生界面（T5）
+  generator.py    AI 出题（照搬骨架 YAML 模板，带校验与重试）
+  launcher.py     打包后的启动入口
+  console.py      控制台编码处理（Windows cp1252 会崩，见文件注释）
 problems/         p001.yaml ... 题目与骨架
 docs/
   skeleton-format.md   骨架 YAML 规范（标注前必读）
@@ -103,6 +106,31 @@ for p in load_problems("problems"):
     if leaks := skeleton_leaks_answer(p):
         print(p.id, "骨架泄漏:", leaks)
 ```
+
+---
+
+## 让 AI 出题（不必先手工标注）
+
+不想先手标 20 题时，可以让 AI 出题 —— 它会照搬上面的 YAML 模板：
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+.venv/bin/python -m lifeng.generator --count 5 --domain organic
+```
+
+生成过程带**三道校验**，不合格会带反馈重试（最多 3 次）：
+
+1. **schema 校验** —— 字段完整性、枚举取值
+2. **骨架不得含答案关键量** —— 骨架会被注入生成提示的 prompt，
+   一旦写进答案，「模型看不到答案就说不出答案」这条结构性防线直接失效
+3. **必须是推理型** —— 记忆型题不进引导流程（C2）
+
+> ⚠️ **AI 出的骨架是另一个命题。** Design Spec 决策 4 是
+> 「**人工**标注骨架 + LLM 措辞」，实验验证的是这个组合。
+> AI 生成的题会标记 `skeleton_source: ai`，将来真做实验时才能区分。
+>
+> 折中做法：用生成器出**草稿**，再人工复核一遍 —— 比从零手写省时，
+> 又保住了「人在环路里」这个前提。
 
 ---
 

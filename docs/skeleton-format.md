@@ -30,6 +30,20 @@
 | `answer` | str | ✅ | 参考答案 |
 | `key_quantities` | list[str] | 推理型必填 | C1 泄漏黑名单，见 §3 |
 | `skeleton` | mapping | 推理型必填 | 见 §4 |
+| `skeleton_source` | enum | 否 | `human` / `ai`，默认 `human`。见 §2.2 |
+
+### 2.2 `skeleton_source` 为什么必须存在
+
+Design Spec 的决策 4 是「**人工**标注骨架 + LLM 措辞」——
+实验要验证的正是这个组合。
+
+若骨架由 AI 生成，验证的命题就变成了「LLM 骨架 + LLM 措辞」，
+**那是另一个命题**。
+
+所以 AI 出的题必须标 `skeleton_source: ai`。否则将来真做实验时，
+无法说明参与验证的骨架里有多少条不是人写的，结论也就无从解释。
+
+用 `python -m lifeng.generator` 生成的题会自动带上这个标记。
 
 ### 2.1 `type` 的语义（对应 C2）
 
