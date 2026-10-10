@@ -75,6 +75,16 @@ def main() -> int:
     from streamlit.web import cli as stcli
 
     root = _resource_root()
+
+    # 子命令分发：打包后没有 `python -m lifeng.generator` 可用，
+    # 若不分发，用户就得另装 Python 才能出题 —— 那 MVP 就缺了一块。
+    #   lifeng generate --count 5 --domain organic
+    if len(sys.argv) > 1 and sys.argv[1] in ("generate", "gen"):
+        from lifeng.generator import main as generator_main
+
+        os.environ.setdefault("LIFENG_PROBLEMS", str(_problems_dir(root)))
+        return generator_main(["lifeng-generate", *sys.argv[2:]])
+
     script = _app_script(root)
 
     if not script.is_file():

@@ -58,3 +58,32 @@ class TestStreamlitCredentials:
         monkeypatch.setattr(launcher.Path, "home", staticmethod(lambda: blocker))
 
         assert launcher._ensure_streamlit_credentials() is False
+
+
+class TestGenerateSubcommand:
+    """打包后没有 ``python -m lifeng.generator`` 可用。
+
+    若 launcher 不分发 ``generate`` 子命令，用户就得另装 Python 才能出题 ——
+    AI 出题这个功能在打包版里等于不存在。
+    """
+
+    def test_dispatches_to_generator(self) -> None:
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        proc = subprocess.run(
+            [sys.executable, "-m", "lifeng.launcher", "generate", "--count", "1"],
+            capture_output=True,
+            text=True,
+            cwd=root,
+            env={**os.environ, "DEEPSEEK_API_KEY": ""},
+            timeout=90,
+        )
+        combined = proc.stdout + proc.stderr
+        # 没有 key 时应由生成器友好失败，而不是跑去启动 Streamlit
+        assert "API key" in combined, combined[-500:]
+        assert "启动界面中" not in combined
+

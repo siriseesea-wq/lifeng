@@ -334,7 +334,8 @@ def generate_batch(
 # --------------------------------------------------------------------------
 
 
-def _main(argv: list[str]) -> int:
+def main(argv: list[str]) -> int:
+    """CLI 入口。打包后由 ``launcher`` 的 ``generate`` 子命令调用。"""
     import argparse
 
     from lifeng.console import make_output_safe
@@ -378,4 +379,4 @@ def _main(argv: list[str]) -> int:
 if __name__ == "__main__":
     import sys
 
-    raise SystemExit(_main(sys.argv))
+    raise SystemExit(main(sys.argv))

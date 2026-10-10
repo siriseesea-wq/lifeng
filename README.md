@@ -157,6 +157,12 @@ onefile 每次启动都要解压数百 MB 到临时目录）。
 cd dist/lifeng && ./lifeng        # Windows 上是 lifeng.exe
 ```
 
+打包版也带 **AI 出题**子命令 —— 否则用户还得另装 Python 才能出题：
+
+```bash
+./lifeng generate --count 5 --domain organic    # Windows: lifeng.exe generate ...
+```
+
 产物是 `dist/lifeng/` 整个目录（约 320MB，因为 Streamlit 硬依赖
 pyarrow/pandas/numpy）。**分发时要打包整个目录**，不能只拷可执行文件。
 
