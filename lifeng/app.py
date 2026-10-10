@@ -16,12 +16,19 @@ import streamlit as st
 
 from lifeng.hint_engine import DeepSeekClient, HintError
 from lifeng.models import SkeletonError, load_problems
-from lifeng.views import render_progress, render_psych, render_review, render_train
+from lifeng.views import (
+    render_progress,
+    render_psych,
+    render_review,
+    render_today,
+    render_train,
+)
 
 PROBLEMS_DIR = Path(os.environ.get("LIFENG_PROBLEMS", "problems"))
 DB_PATH = Path(os.environ.get("LIFENG_DB", "store.db"))
 
-PAGES = ("训练", "复习", "进度", "心理")
+# 今日排在第一位：系统主导，学生不必先做「今天做什么」这个决定。
+PAGES = ("今日", "训练", "复习", "进度", "心理")
 MODE_LABELS = {"hint": "实验组（可请求提示）", "baseline": "基线组（无提示）"}
 
 
@@ -97,7 +104,11 @@ def main() -> None:
             client = None
         st.caption(f"题库：{PROBLEMS_DIR}　共 {len(hintable)} 题")
 
-    if page == "训练":
+    if page == "今日":
+        render_today(
+            student_code=student_code, db_path=DB_PATH, problems_dir=PROBLEMS_DIR
+        )
+    elif page == "训练":
         render_train(
             hintable,
             student_code=student_code,

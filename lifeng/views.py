@@ -24,6 +24,7 @@ import streamlit as st
 from lifeng.hint_engine import HintError
 from lifeng.leak_check import guard_hint, skeleton_leaks_answer
 from lifeng.models import Problem, load_problems
+from lifeng.planner import build_daily_plan
 from lifeng.psych import (
     AROUSAL_NOTE,
     BOUNDARY_ADVICE,
@@ -301,6 +302,67 @@ def render_train(
             st.session_state.last_attempt = ""
         except StoreError as exc:
             st.error(f"记录失败：{exc}")
+
+
+# --------------------------------------------------------------------------
+# 今日（系统主导）
+# --------------------------------------------------------------------------
+
+
+def render_today(*, student_code: str, db_path: Path, problems_dir: Path) -> None:
+    """今天做什么 —— 由系统决定，不由学生挑。
+
+    对卡住的人来说，"今天做哪道"这个决定本身就是负担，
+    结果往往是挑最熟的做、或者干脆不做。这一页把这个决定拿走。
+    """
+    st.subheader("今天做什么")
+    if not student_code:
+        st.info("请先在左侧填写学生代号。")
+        return
+
+    try:
+        problems = load_problems(problems_dir)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"题库装载失败：{exc}")
+        return
+
+    with Store(db_path) as store:
+        plan = build_daily_plan(store, problems, student_code)
+
+    if plan.is_empty:
+        st.success("今天没有任务。可以去「训练」页自己挑一道。")
+        return
+
+    st.markdown(f"### {plan.headline}")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("到期复习", plan.review_count)
+    c2.metric("新题", plan.new_count)
+    c3.metric("补弱", plan.weakest_count)
+
+    by_id = {p.id: p for p in problems}
+    for index, item in enumerate(plan.items, start=1):
+        problem = by_id.get(item.problem_id)
+        with st.container(border=True):
+            left, right = st.columns([3, 1])
+            with left:
+                st.markdown(f"**{index}. {item.problem_id}**")
+                st.caption(item.reason)
+                if problem is not None:
+                    first_line = problem.statement.strip().splitlines()[0]
+                    st.markdown(f"{first_line[:60]}…")
+            with right:
+                if st.button(
+                    "开始", key=f"today_{item.problem_id}", use_container_width=True
+                ):
+                    st.session_state.pending_problem = item.problem_id
+                    st.session_state.pending_page = "训练"
+                    st.rerun()
+
+    st.caption(
+        "顺序是系统排的：先清到期复习（不复习会忘），再做新题，"
+        "都够了就回去补最弱的那块。"
+    )
 
 
 # --------------------------------------------------------------------------
