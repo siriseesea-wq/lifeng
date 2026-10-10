@@ -15,6 +15,7 @@ Streamlit 层只负责渲染与状态。
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 import streamlit as st
@@ -228,8 +229,11 @@ def main() -> None:
                 st.session_state.last_attempt = attempt_text
                 st.session_state.history.append(("尝试", attempt_text))
                 st.success("已记录。")
-            except (StoreError, Exception) as exc:  # noqa: BLE001
+            except StoreError as exc:
                 st.error(f"记录失败：{exc}")
+            except sqlite3.Error as exc:
+                # 磁盘满、库损坏等 —— 不应静默吞掉，否则数据缺失无人察觉
+                st.error(f"数据库错误：{exc}")
 
     # ---- 请求提示 -------------------------------------------------------
     if ask_hint:
