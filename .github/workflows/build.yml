@@ -71,4 +71,43 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          generate_release_notes: true
+          body: |
+            > ⚠️ **这是阶段一验证实验的构建产物，核心假设尚未验证。**
+
+            砺锋 v2 目前只服务于一个命题的验证：
+            **「人工标注骨架 + LLM 措辞」能否稳定产出不泄答案、且学生确实推进的提示？**
+
+            详见 `docs/aegis/specs/`（Design Spec）与 `docs/aegis/plans/`（实验计划）。
+            核心假设未跑通前，产物不保证可用性。
+
+            ## 下载与运行
+
+            产物是**整个目录的压缩包**，不是单文件：
+
+            1. 解压后得到 `lifeng/` 目录
+            2. 运行 `lifeng`（Windows 上是 `lifeng.exe`）
+            3. **不要把可执行文件单独拷出来** —— 同目录的 `_internal/` 必须一起带上
+            4. 浏览器会自动打开界面
+
+            首次使用需设置模型密钥：
+
+            ```bash
+            export DEEPSEEK_API_KEY=sk-...        # Linux / macOS
+            set DEEPSEEK_API_KEY=sk-...           # Windows
+            ```
+
+            ## 关于安卓
+
+            **不提供安卓安装包，也无法打包。** Streamlit 是服务端 Web 框架，
+            界面由浏览器渲染，`buildozer` 打包的是 Kivy（另一套 GUI 工具包），两者不兼容。
+
+            **正确用法**：在安卓浏览器里打开运行机器的局域网地址
+            （启动时会显示 `Network URL`）。学生无需安装任何东西。
+
+            ## 平台验证状态
+
+            | 平台 | 构建 | 实际运行 |
+            |---|---|---|
+            | Linux x86_64 | ✅ CI | ✅ 已在本机实测运行 |
+            | Windows x86_64 | ✅ CI | ⚠️ **未实测**（构建机为 Linux，无法运行 exe） |
+            | macOS arm64 | ✅ CI | ⚠️ **未实测** |
