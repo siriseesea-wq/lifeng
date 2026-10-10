@@ -1,0 +1,7 @@
+# 砺锋 v2 —— 运行时依赖
+pyyaml>=6.0
+streamlit>=1.35
+openai>=1.50
+
+# 开发 / 验证
+pytest>=8.3
