@@ -122,6 +122,15 @@ def main() -> int:
         str(script),
         "--global.developmentMode=false",
         "--browser.gatherUsageStats=false",
+        # 主题必须在这里传，不能只靠仓库里的 .streamlit/config.toml：
+        # Streamlit 从**当前工作目录**找那个文件，而打包版是在用户
+        # 自己的目录里运行的，那里没有这个文件 —— 不传的话，
+        # 打包版的选中态/焦点环会退回 Streamlit 默认的红色，
+        # 和蓝色品牌打架。配色与 lifeng/theme.py 保持一致。
+        "--theme.primaryColor=#2456E6",
+        "--theme.backgroundColor=#FFFFFF",
+        "--theme.secondaryBackgroundColor=#F6F8FC",
+        "--theme.textColor=#0F172A",
     ]
     if not _ensure_streamlit_credentials():
         # 写不进凭据文件（只读 home 等）时，headless 同样能跳过邮箱询问，

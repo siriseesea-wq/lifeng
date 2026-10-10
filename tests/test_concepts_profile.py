@@ -14,6 +14,7 @@ import pytest
 
 from lifeng.concepts import Concept, ConceptError, ConceptGraph
 from lifeng.models import load_problems
+from lifeng.review import MASTERED_THRESHOLD, WEAK_THRESHOLD
 from lifeng.profile import (
     MASTERED_THRESHOLD,
     WEAK_THRESHOLD,
@@ -189,11 +190,22 @@ class TestDot:
                 assert f'"{prereq}" -> "{cid}"' in dot
 
     def test_highlights_missing_and_known(self, graph):
+        """薄弱与已稳必须画出**明显不同**的样式。
+
+        这里断言语义差异（不同的填充色），而不是写死色值 ——
+        配色属于设计令牌，会跟着 theme.py 调整，不该把测试钉在十六进制上。
+        """
         cid = next(iter(graph.concepts))
-        dot = graph.to_dot(missing={cid})
-        assert "#C62828" in dot  # 红框
-        dot2 = graph.to_dot(emphasise={cid})
-        assert "#2E7D32" in dot2  # 绿
+        plain = graph.to_dot()
+        missing = graph.to_dot(missing={cid})
+        known = graph.to_dot(emphasise={cid})
+
+        def node_line(dot: str) -> str:
+            return next(l for l in dot.splitlines() if l.startswith(f'  "{cid}" ['))
+
+        assert node_line(plain) != node_line(missing), "薄弱的样式没有变化"
+        assert node_line(plain) != node_line(known), "已稳的样式没有变化"
+        assert node_line(missing) != node_line(known), "薄弱与已稳画成了同一个样子"
 
     def test_escapes_quotes(self):
         g = ConceptGraph(concepts={"a": Concept(id="a", title='有"引号"')})
@@ -322,3 +334,32 @@ class TestConceptTitles:
 
     def test_unknown_id_passes_through(self, graph):
         assert concept_titles(graph, ("nope",)) == ["nope"]
+
+
+class TestProfileCountsAreConsistent:
+    """画像上的分类必须互斥且不重不漏 —— 数字自相矛盾比没有数字更糟。
+
+    回归：早先 ``untouched`` 被定义成「没掌握」，于是一个都没稳时
+    全部知识点都算「未触及」，与「薄弱」相加超过总数。
+    """
+
+    def test_categories_do_not_overlap_or_exceed(self, store, problems, graph):
+        _complete(store, "p001", outcome=0.0)
+        profile = build_profile(store, problems, graph, "S1")
+
+        mastered = set(profile.mastered)
+        weak = set(profile.weak)
+        untouched = set(profile.untouched)
+
+        assert not (mastered & weak), "已稳与薄弱重叠"
+        assert not (mastered & untouched), "已稳与未触及重叠"
+        assert not (weak & untouched), "薄弱与未触及重叠"
+        assert len(mastered | weak | untouched) <= len(graph), "分类之和超过知识点总数"
+
+    def test_untouched_means_never_attempted(self, store, problems, graph):
+        """做过题的（哪怕很弱）不算「未触及」。"""
+        _complete(store, "p003", outcome=0.0)
+        profile = build_profile(store, problems, graph, "S1")
+
+        assert "aromaticity" in profile.weak
+        assert "aromaticity" not in profile.untouched

@@ -1,0 +1,19 @@
+# 砺锋 Streamlit 主题
+#
+# 为什么用 config.toml 而不是 CSS：primaryColor 控制的是**原生控件**
+# （单选按钮选中色、滑块、焦点环、复选框）。这些颜色由 Streamlit
+# 在渲染时注入，CSS 覆盖既脆弱又容易漏。
+# 从配置里改才是官方路径 —— 改一次，所有原生控件一起对齐。
+#
+# 配色与 lifeng/theme.py 中的设计令牌保持一致，改一处要改两处。
+
+[theme]
+primaryColor = "#2456E6"              # 品牌蓝：选中态、焦点环
+backgroundColor = "#FFFFFF"           # 主内容底色
+secondaryBackgroundColor = "#F6F8FC"  # 侧栏与次级底色
+textColor = "#0F172A"
+font = "sans serif"
+
+# 关掉使用数据收集。这个工具是本地自用，不该往外发任何东西。
+[browser]
+gatherUsageStats = false

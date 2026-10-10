@@ -191,20 +191,27 @@ class ConceptGraph:
         missing = missing or set()
 
         lines = ["digraph lifeng {"]
-        lines.append('  rankdir=LR;')
+        lines.append("  rankdir=LR;")
         lines.append('  bgcolor="transparent";')
+        # splines=curved 而不是直线：前置关系是网状的，直线箭头会互相穿过，
+        # 曲线能明显降低读图成本。ranksep/nodesep 同理。
+        lines.append("  splines=curved;")
+        lines.append("  ranksep=0.75;")
+        lines.append("  nodesep=0.28;")
+        lines.append('  graph [pad="0.2", fontname="Helvetica"];')
         lines.append(
             '  node [shape=box, style="rounded,filled", fontname="Helvetica",'
-            ' fontsize=11, fillcolor="#ECEFF1", color="#90A4AE"];'
+            ' fontsize=11, margin="0.16,0.10",'
+            ' fillcolor="#F1F5F9", color="#CBD5E1", penwidth=1.2];'
         )
-        lines.append('  edge [color="#B0BEC5", arrowsize=0.6];')
+        lines.append('  edge [color="#94A3B8", arrowsize=0.65, penwidth=1.1];')
 
         for cid, concept in sorted(self.concepts.items()):
             label = _escape(concept.title or cid)
             if cid in missing:
-                attrs = 'fillcolor="#FFEBEE", color="#C62828", penwidth=2'
+                attrs = 'fillcolor="#FDECEC", color="#DC2626", penwidth=2'
             elif cid in emphasise:
-                attrs = 'fillcolor="#E8F5E9", color="#2E7D32"'
+                attrs = 'fillcolor="#E7F6F0", color="#0E9F6E", penwidth=2'
             else:
                 attrs = ""
             lines.append(f'  "{cid}" [label="{label}"{", " + attrs if attrs else ""}];')
@@ -212,10 +219,13 @@ class ConceptGraph:
         for cid, concept in sorted(self.concepts.items()):
             for prereq in concept.prerequisites:
                 if prereq in self.concepts:
-                    lines.append(f'  "{prereq}" -> "{cid}";')
+                    lines.append(f'  "{prereq}" -> "{cid}" [color="#64748B"];')
             for rel in concept.related:
                 if rel in self.concepts:
-                    lines.append(f'  "{cid}" -> "{rel}" [style=dashed, dir=none];')
+                    # dir=none：相关关系是双向的，画箭头会误导
+                    lines.append(
+                        f'  "{cid}" -> "{rel}" [style=dashed, dir=none, color="#CBD5E1"];'
+                    )
 
         lines.append("}")
         return "\n".join(lines)

@@ -27,13 +27,15 @@ from dataclasses import dataclass, field
 
 from lifeng.concepts import ConceptGraph
 from lifeng.models import Problem
-from lifeng.review import mastery_label
+from lifeng.review import (
+    MASTERED_THRESHOLD,
+    WEAK_THRESHOLD,
+    mastery_label,
+)
 
-#: 掌握度高于此值算「稳」。
-MASTERED_THRESHOLD = 0.40
+# 阈值从 review 导入，不在这里重复定义 —— 单一属主。
+# 兼容旧引用：本模块仍导出这两个名字。
 
-#: 低于此值算「薄弱」，需要回头补。
-WEAK_THRESHOLD = 0.25
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,13 @@ def build_profile(
     mastered = tuple(s.concept_id for s in standings if s.mastery >= MASTERED_THRESHOLD)
     weak = tuple(s.concept_id for s in standings if s.mastery < WEAK_THRESHOLD)
 
+    # 「未触及」= 没有对应题目的知识点，**不是**「没掌握」。
+    # 早先写成了 set(graph) - known（known 只含已稳），结果一个都没稳时
+    # 全部 19 个都算「未触及」，和「薄弱 10」加起来超过总数 —— 自相矛盾。
+    # 语义应当是：做过题才有掌握度，没做过题的才算未触及。
+    touched = {s.concept_id for s in standings}
+    untouched = tuple(sorted(set(graph.concepts) - touched))
+
     # ── 前置缺口：薄弱点的根在哪 ────────────────────────────────────
     known = set(mastered)
     gaps: set[str] = set()
@@ -164,7 +173,7 @@ def build_profile(
         standings=tuple(standings),
         mastered=mastered,
         weak=weak,
-        untouched=tuple(sorted(set(graph.concepts) - known)),
+        untouched=untouched,
         missing_prerequisites=missing,
         next_concepts=next_concepts,
         hint_dependency=hint_dependency,

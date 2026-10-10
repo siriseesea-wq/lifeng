@@ -19,8 +19,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import altair as alt
 import streamlit as st
 
+from lifeng import theme
 from lifeng.concepts import ConceptError, ConceptGraph
 from lifeng.hint_engine import HintError
 from lifeng.leak_check import guard_hint, skeleton_leaks_answer
@@ -176,11 +178,15 @@ def render_train(
         st.session_state.session_id = None
         st.session_state.last_attempt = ""
 
-    st.subheader(f"题目 {problem.id}")
-    st.markdown(problem.statement)
+    theme.hero(
+        f"训练 · {problem.id}",
+        "卡住时按层取提示 —— 第 1~3 层不会给答案",
+        compact=True,
+    )
+    theme.section("题干", f"{problem.domain} · reasoning")
+    st.markdown(f'<div class="lf-quote">{problem.statement}</div>', unsafe_allow_html=True)
 
     # ---- 计时与进度（图形化）--------------------------------------------
-    col_t, col_l, col_h = st.columns(3)
     with Store(db_path) as store:
         elapsed = (
             store.elapsed_seconds(st.session_state.session_id)
@@ -192,14 +198,15 @@ def render_train(
             if st.session_state.get("session_id")
             else 0
         )
-    col_t.metric("用时", f"{(elapsed or 0) // 60} 分 {(elapsed or 0) % 60} 秒")
-    col_l.metric("已用提示", LEVEL_LABELS.get(st.session_state.level, "—"))
-    col_h.metric("尝试次数", attempts)
-
-    st.progress(
-        min(st.session_state.level / 4, 1.0),
-        text=f"提示进度 {st.session_state.level} / 4",
+    level = st.session_state.level
+    theme.stats(
+        [
+            ("用时", f"{(elapsed or 0) // 60}:{(elapsed or 0) % 60:02d}", "", "分:秒"),
+            ("已用提示", LEVEL_LABELS.get(level, "—"), "warn" if level else "good", f"{level} / 4 层"),
+            ("尝试次数", str(attempts), "brand", "本会话"),
+        ]
     )
+    st.markdown(theme.mastery_bar(level, tone="warn", scale=4.0), unsafe_allow_html=True)
 
     with st.expander("实验者信息（学生可忽略）"):
         st.write(
@@ -221,7 +228,7 @@ def render_train(
     #
     # 刻意不自动展示。学生一卡住就看到讲义，等于跳过了那段费力思考 ——
     # 而那段思考正是这个工具存在的理由。要查得自己按。
-    with st.expander("📖 查资料（讲义里的相关段落）"):
+    with st.expander("查资料 —— 讲义里的相关段落"):
         st.caption(
             "这里只给讲义原文，**不直接给答案** —— 怎么用由你判断。"
         )
@@ -344,9 +351,9 @@ def render_train(
     st.caption("做完就点一下，系统据此安排复习时间。")
     d1, d2 = st.columns(2)
     with d1:
-        solved = st.button("✅ 我做出来了", use_container_width=True, type="primary")
+        solved = st.button("我做出来了", use_container_width=True, type="primary")
     with d2:
-        gave_up = st.button("🏳️ 卡住了，先放着", use_container_width=True)
+        gave_up = st.button("卡住了，先放着", use_container_width=True)
 
     if solved or gave_up:
         max_level = st.session_state.level
@@ -384,9 +391,17 @@ def render_today(*, student_code: str, db_path: Path, problems_dir: Path) -> Non
     对卡住的人来说，"今天做哪道"这个决定本身就是负担，
     结果往往是挑最熟的做、或者干脆不做。这一页把这个决定拿走。
     """
-    st.subheader("今天做什么")
     if not student_code:
-        st.info("请先在左侧填写学生代号。")
+        theme.hero(
+            "砺锋",
+            "化学竞赛 · 苏格拉底式分层引导 —— 卡住时给方向，不直接给答案",
+            "本地运行 · 数据不出本机",
+        )
+        theme.empty_state(
+            "先在左边填一个学生代号",
+            "随便起一个，比如名字缩写或学号。<br>"
+            "代号只用来区分不同学生的记录，不会上传到任何地方。",
+        )
         return
 
     try:
@@ -398,35 +413,58 @@ def render_today(*, student_code: str, db_path: Path, problems_dir: Path) -> Non
     with Store(db_path) as store:
         plan = build_daily_plan(store, problems, student_code)
 
+    theme.hero(
+        f"今天，{student_code}",
+        plan.headline,
+        f"{len(plan.items)} 项任务",
+    )
+
     if plan.is_empty:
-        st.success("今天没有任务。可以去「训练」页自己挑一道。")
+        theme.empty_state(
+            "今天没有任务",
+            "题库空了，或者都还没标注。<br>可以去「训练」页自己挑一道。",
+        )
         return
 
-    st.markdown(f"### {plan.headline}")
+    theme.stats(
+        [
+            ("到期复习", str(plan.review_count), "warn" if plan.review_count else "", "不复习会忘"),
+            ("新题", str(plan.new_count), "brand" if plan.new_count else "", "往前推进度"),
+            ("补弱", str(plan.weakest_count), "bad" if plan.weakest_count else "", "回头补最弱的"),
+        ]
+    )
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("到期复习", plan.review_count)
-    c2.metric("新题", plan.new_count)
-    c3.metric("补弱", plan.weakest_count)
+    tone_map = {"review": "warn", "new": "brand", "weakest": "bad"}
+    kind_map = {"review": "复习", "new": "新题", "weakest": "补弱"}
 
+    theme.section("任务清单", "顺序由系统排定")
     by_id = {p.id: p for p in problems}
     for index, item in enumerate(plan.items, start=1):
         problem = by_id.get(item.problem_id)
-        with st.container(border=True):
-            left, right = st.columns([3, 1])
-            with left:
-                st.markdown(f"**{index}. {item.problem_id}**")
-                st.caption(item.reason)
-                if problem is not None:
-                    first_line = problem.statement.strip().splitlines()[0]
-                    st.markdown(f"{first_line[:60]}…")
-            with right:
-                if st.button(
-                    "开始", key=f"today_{item.problem_id}", use_container_width=True
-                ):
-                    st.session_state.pending_problem = item.problem_id
-                    st.session_state.pending_page = "训练"
-                    st.rerun()
+        first_line = problem.statement.strip().splitlines()[0] if problem else ""
+        tone = tone_map.get(item.kind, "mute")
+        card_col, btn_col = st.columns([6, 1], vertical_alignment="center")
+        with card_col:
+            st.markdown(
+                theme._compact(
+                    f"""
+                <div class="lf-card {item.kind}">
+                  <div class="lf-card-head">
+                    <span class="lf-card-id">{item.problem_id}</span>
+                    {theme.chip(kind_map.get(item.kind, item.kind), tone)}
+                  </div>
+                  <div class="lf-card-title">{index}. {first_line[:52]}{'…' if len(first_line) > 52 else ''}</div>
+                  <div class="lf-card-reason">{item.reason}</div>
+                </div>
+                """
+                ),
+                unsafe_allow_html=True,
+            )
+        with btn_col:
+            if st.button("开始", key=f"today_{item.problem_id}", use_container_width=True):
+                st.session_state.pending_problem = item.problem_id
+                st.session_state.pending_page = "训练"
+                st.rerun()
 
     st.caption(
         "顺序是系统排的：先清到期复习（不复习会忘），再做新题，"
@@ -440,9 +478,9 @@ def render_today(*, student_code: str, db_path: Path, problems_dir: Path) -> Non
 
 
 def render_review(*, student_code: str, db_path: Path) -> None:
-    st.subheader("今天该重做哪些题")
+    theme.hero("复习", "今天该重做哪些题 —— 由间隔算法排定", compact=True)
     if not student_code:
-        st.info("请先在左侧填写学生代号。")
+        theme.empty_state("先填学生代号", "在左边填一个，才能看到你的复习安排。")
         return
 
     with Store(db_path) as store:
@@ -455,18 +493,19 @@ def render_review(*, student_code: str, db_path: Path) -> None:
         overview = store.student_overview(student_code)
 
     if not overview:
-        st.info("还没有做过题。先去「训练」页做一道。")
+        theme.empty_state("还没有记录", "先去「今日」或「训练」页做一道题。")
         return
 
-    # 统计卡
-    c1, c2, c3 = st.columns(3)
-    c1.metric("在跟踪的题", len(overview))
-    c2.metric("今天到期", len(due))
     avg = sum(float(r["mastery"]) for r in overview) / len(overview)
-    c3.metric("平均掌握度", f"{avg:.2f}", mastery_label(avg))
+    theme.stats(
+        [
+            ("在跟踪的题", str(len(overview)), "brand", "已进入复习计划"),
+            ("今天到期", str(len(due)), "warn" if due else "good", "该重做的"),
+            ("平均掌握度", f"{avg:.2f}", theme.tone_for(avg), mastery_label(avg)),
+        ]
+    )
 
-    # 未来 14 天的到期分布（图形化）
-    st.markdown("**接下来 14 天的复习量**")
+    theme.section("接下来 14 天的复习量")
     today = date.today()
     buckets = {today + timedelta(days=i): 0 for i in range(14)}
     overdue = 0
@@ -483,37 +522,61 @@ def render_review(*, student_code: str, db_path: Path) -> None:
     import pandas as pd
 
     chart = pd.DataFrame(
-        {"到期题数": list(buckets.values())},
-        index=[d.strftime("%m-%d") for d in buckets],
+        {
+            "日期": [d.strftime("%m-%d") for d in buckets],
+            "到期题数": list(buckets.values()),
+        }
     )
-    st.bar_chart(chart, height=200)
+    base = alt.Chart(chart).encode(
+        x=alt.X("日期:N", axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("到期题数:Q", axis=alt.Axis(tickMinStep=1)),
+        tooltip=["日期", "到期题数"],
+    )
+    st.altair_chart(
+        (base.mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.BRAND, size=34))
+        .properties(height=190)
+        .configure(**theme.altair_theme()["config"]),
+        use_container_width=True,
+    )
     if overdue:
         st.caption(f"另有 **{overdue}** 道已逾期未复习。")
 
-    # 到期清单
-    st.markdown("**到期清单**（最弱的排前面）")
+    theme.section("到期清单", "最弱的排前面")
     if not due:
-        st.success("今天没有到期项。")
+        st.success("今天没有到期项，去「今日」页看看安排。")
         return
 
     for row in due:
         pid = str(row["problem_id"])
         problem = by_id.get(pid)
         mastery = float(row["mastery"])
-        with st.container(border=True):
-            left, right = st.columns([3, 1])
-            with left:
-                title = problem.statement.strip().splitlines()[0] if problem else pid
-                st.markdown(f"**{pid}** · {mastery_label(mastery)}　{title[:40]}")
-                st.progress(min(mastery / 0.95, 1.0), text=f"掌握度 {mastery:.2f}")
-            with right:
-                if st.button("开始重做", key=f"redo_{pid}", use_container_width=True):
-                    # 不直接改 st.session_state.nav / problem_id ——
-                    # 那两个 widget 已经实例化，改了会报错。
-                    # 交给 app.py 在下一轮开头处理。
-                    st.session_state.pending_problem = pid
-                    st.session_state.pending_page = "训练"
-                    st.rerun()
+        title = problem.statement.strip().splitlines()[0] if problem else pid
+        card_col, redo_col = st.columns([6, 1], vertical_alignment="center")
+        with card_col:
+            st.markdown(
+                theme._compact(
+                    f"""
+                <div class="lf-card review">
+                  <div class="lf-card-head">
+                    <span class="lf-card-id">{pid}</span>
+                    {theme.chip(mastery_label(mastery), theme.tone_for(mastery))}
+                    <span class="lf-card-reason" style="margin:0">掌握度 {mastery:.2f}</span>
+                  </div>
+                  <div class="lf-card-title">{title[:56]}</div>
+                  {theme.mastery_bar(mastery, tone=theme.tone_for(mastery))}
+                </div>
+                """
+                ),
+                unsafe_allow_html=True,
+            )
+        with redo_col:
+            if st.button("重做", key=f"redo_{pid}", use_container_width=True):
+                # 不直接改 st.session_state.nav / problem_id ——
+                # 那两个 widget 已经实例化，改了会报错。
+                # 交给 app.py 在下一轮开头处理。
+                st.session_state.pending_problem = pid
+                st.session_state.pending_page = "训练"
+                st.rerun()
 
 
 # --------------------------------------------------------------------------
@@ -522,9 +585,9 @@ def render_review(*, student_code: str, db_path: Path) -> None:
 
 
 def render_progress(*, student_code: str, db_path: Path) -> None:
-    st.subheader("我哪儿稳、哪儿生")
+    theme.hero("进度", "我哪儿稳、哪儿生", compact=True)
     if not student_code:
-        st.info("请先在左侧填写学生代号。")
+        theme.empty_state("先填学生代号", "在左边填一个，才能看到你的进度。")
         return
 
     with Store(db_path) as store:
@@ -532,63 +595,115 @@ def render_progress(*, student_code: str, db_path: Path) -> None:
         attempts = [a for a in store.iter_attempts() if a["student_code"] == student_code]
 
     if not overview and not attempts:
-        st.info("还没有数据。先去「训练」页做一道题。")
+        theme.empty_state("还没有数据", "先去「今日」或「训练」页做一道题。")
         return
 
-    # 顶部指标
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("已练题数", len({a["problem_id"] for a in attempts}))
-    c2.metric("累计尝试", len(attempts))
-    hinted = sum(1 for a in attempts if a["hint_text"])
-    c3.metric("用了提示的次数", hinted)
-    if overview:
-        avg = sum(float(r["mastery"]) for r in overview) / len(overview)
-        c4.metric("平均掌握度", f"{avg:.2f}", mastery_label(avg))
-    else:
-        c4.metric("平均掌握度", "—")
-
-    if not overview:
-        st.info("还没有完成记录。做完整题后点「我做出来了」才会进入掌握度统计。")
-        return
-
-    # 掌握度条形图
-    st.markdown("**各题掌握度**")
     import pandas as pd
 
-    rows = sorted(overview, key=lambda r: float(r["mastery"]))
-    frame = pd.DataFrame(
-        {"掌握度": [float(r["mastery"]) for r in rows]},
-        index=[str(r["problem_id"]) for r in rows],
+    hinted = sum(1 for a in attempts if a["hint_text"])
+    avg = sum(float(r["mastery"]) for r in overview) / len(overview) if overview else 0.0
+    # 「已练题数」按**不同题目**计数。attempt 的 problem_id 来自它所属的 session，
+    # 而 session 是每题一个 —— 所以这个数就是真正做过的题数。
+    practiced = len({a["problem_id"] for a in attempts})
+    theme.stats(
+        [
+            ("已练题数", str(practiced), "brand", "不同题目"),
+            ("累计尝试", str(len(attempts)), "", "含重做"),
+            ("用了提示", str(hinted), "warn" if hinted else "good", "次数"),
+            (
+                "平均掌握度",
+                f"{avg:.2f}" if overview else "—",
+                theme.tone_for(avg) if overview else "",
+                mastery_label(avg) if overview else "还没有完成记录",
+            ),
+        ]
     )
-    st.bar_chart(frame, height=max(220, 28 * len(rows)))
 
-    # 明细表
-    st.markdown("**明细**")
-    table = [
+    if not overview:
+        st.info("做完整题后点「我做出来了」，才会进入掌握度统计。")
+        return
+
+    rows = sorted(overview, key=lambda r: float(r["mastery"]))
+
+    theme.section("各题掌握度", "从弱到强")
+    frame = pd.DataFrame(
         {
-            "题号": str(r["problem_id"]),
-            "状态": mastery_label(float(r["mastery"])),
-            "掌握度": round(float(r["mastery"]), 3),
-            "间隔(天)": int(r["interval_days"]),
-            "下次复习": str(r["next_review"]),
-            "复习次数": int(r["review_count"]),
+            "题号": [str(r["problem_id"]) for r in rows],
+            "掌握度": [float(r["mastery"]) for r in rows],
         }
-        for r in rows
-    ]
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    )
+    # 颜色用**离散分档**，不用连续映射：连续映射会让同一根柱子左红右橙，
+    # 看着像两根。分档也更容易一眼读懂「稳 / 还行 / 生」。
+    frame["状态"] = [mastery_label(v) for v in frame["掌握度"]]
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, size=17)
+        .encode(
+            y=alt.Y("题号:N", sort="-x", axis=alt.Axis(title=None)),
+            x=alt.X(
+                "掌握度:Q",
+                scale=alt.Scale(domain=[0, 0.6]),
+                axis=alt.Axis(title=None, format=".0%", tickCount=4),
+            ),
+            color=alt.Color(
+                "状态:N",
+                scale=alt.Scale(
+                    domain=["生", "还行", "稳"],
+                    range=[theme.BAD, theme.WARN, theme.GOOD],
+                ),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            tooltip=["题号", alt.Tooltip("掌握度:Q", format=".3f"), "状态"],
+        )
+        .properties(height=max(170, 30 * len(rows)))
+        .configure(**theme.altair_theme()["config"])
+    )
+    st.altair_chart(bars, use_container_width=True)
+
+    theme.section("明细")
+    st.dataframe(
+        [
+            {
+                "题号": str(r["problem_id"]),
+                "状态": mastery_label(float(r["mastery"])),
+                "掌握度": round(float(r["mastery"]), 3),
+                "间隔(天)": int(r["interval_days"]),
+                "下次复习": str(r["next_review"]),
+                "复习次数": int(r["review_count"]),
+            }
+            for r in rows
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
 
     # 提示使用情况 —— 这是"引导有没有用"的直接信号
     if attempts:
-        st.markdown("**提示使用分布**")
+        theme.section("提示使用分布", "比「做没做对」更能说明问题")
         counts = {f"第 {i} 层": 0 for i in range(1, 5)}
         for a in attempts:
             lvl = int(a["level_requested"])
             if lvl >= 1:
                 counts[f"第 {lvl} 层"] = counts.get(f"第 {lvl} 层", 0) + 1
-        st.bar_chart(pd.DataFrame({"次数": list(counts.values())}, index=list(counts)), height=180)
+        hint_frame = pd.DataFrame(
+            {"层级": list(counts), "次数": list(counts.values())}
+        )
+        hint_chart = (
+            alt.Chart(hint_frame)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.ACCENT, size=48)
+            .encode(
+                x=alt.X("层级:N", axis=alt.Axis(labelAngle=0, title=None)),
+                y=alt.Y("次数:Q", axis=alt.Axis(tickMinStep=1, title=None)),
+                tooltip=["层级", "次数"],
+            )
+        )
+        st.altair_chart(
+            hint_chart.properties(height=170).configure(**theme.altair_theme()["config"]),
+            use_container_width=True,
+        )
         st.caption(
-            "提示用在哪一层，比「做没做对」更能说明问题："
-            "第 1~2 层就能推进，说明方向性提问真的起作用。"
+            "第 1~2 层就能推进，说明方向性提问真的起作用；"
+            "如果都堆在第 4 层，说明提示给得太晚了。"
         )
 
 
@@ -598,7 +713,7 @@ def render_progress(*, student_code: str, db_path: Path) -> None:
 
 
 def render_psych() -> None:
-    st.subheader("状态不对时，先看这里")
+    theme.hero("心理资源", "状态不对时，先看这里 —— 由你自己判断属于哪种", compact=True)
     st.caption(
         "这里只提供自助方法和求助指引，**不做情绪检测、不做心理判断**。"
         "由你自己判断现在属于哪种情况。"
@@ -614,8 +729,7 @@ def render_psych() -> None:
                 if tech.note:
                     st.caption(tech.note)
 
-    st.divider()
-    st.markdown("### 什么时候该找成年人")
+    theme.section("什么时候该找成年人", "这几条不属于自助能处理的范围")
     st.error(
         "下面任何一条成立，**请找成年人** —— 监护人、学校心理老师，"
         "或当地心理援助热线。"
@@ -659,7 +773,11 @@ def render_graph(
     用 Streamlit 内置的 ``st.graphviz_chart``（接受 DOT 字符串）——
     **不需要 graphviz 包，也不需要 plotly**，打包体积不涨。
     """
-    st.subheader("知识点图谱")
+    theme.hero(
+        "知识点图谱",
+        "实线 = 前置依赖，虚线 = 相关概念",
+        compact=True,
+    )
     graph = _load_graph(concepts_path)
     if graph is None:
         return
@@ -682,10 +800,13 @@ def render_graph(
     st.graphviz_chart(graph.to_dot(emphasise=known, missing=weak), use_container_width=True)
     st.caption("实线箭头 = 前置依赖；虚线 = 相关概念。绿色已稳、红色薄弱、灰色未触及。")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("知识点总数", len(graph))
-    c2.metric("已稳", len(known))
-    c3.metric("薄弱", len(weak))
+    theme.stats(
+        [
+            ("知识点总数", str(len(graph)), "brand", "图谱规模"),
+            ("已稳", str(len(known)), "good", "掌握度达标"),
+            ("薄弱", str(len(weak)), "bad", "需要回头补"),
+        ]
+    )
 
     # 题库覆盖缺口 —— 图谱比题库大的时候，这里直接告诉你该补什么题
     covered = {c for p in problems for c in p.concepts}
@@ -722,7 +843,7 @@ def render_profile(
 
     它回答的是「我到底缺什么、下一步动哪一块」，而不是再列一遍数据。
     """
-    st.subheader("学生画像")
+    theme.hero("画像", "从你的作答里推出的判断 —— 缺什么、下一步动哪块", compact=True)
     if not student_code:
         st.info("请先在左侧填写学生代号。")
         return
@@ -745,24 +866,61 @@ def render_profile(
 
     st.info(profile.headline)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("已稳知识点", len(profile.mastered))
-    c2.metric("薄弱知识点", len(profile.weak))
-    c3.metric("未触及", len(profile.untouched))
-    c4.metric("提示依赖", f"{profile.hint_dependency:.1f} 层")
+    theme.stats(
+        [
+            ("已稳知识点", str(len(profile.mastered)), "good", "掌握度达标"),
+            ("薄弱知识点", str(len(profile.weak)), "bad", "做过但没稳"),
+            ("未触及", str(len(profile.untouched)), "", "还没有对应的题"),
+            (
+                "提示依赖",
+                f"{profile.hint_dependency:.1f}",
+                "warn" if profile.hint_dependency > 2.5 else "good",
+                "平均用到第几层",
+            ),
+        ]
+    )
 
     # ── 概念层面的掌握度（图形化）───────────────────────────────────
-    st.markdown("**各知识点掌握度**")
+    theme.section("各知识点掌握度", "从弱到强")
     import pandas as pd
 
     rows = sorted(profile.standings, key=lambda s: s.mastery)
     frame = pd.DataFrame(
-        {"掌握度": [s.mastery for s in rows]},
-        index=[s.title for s in rows],
+        {
+            "知识点": [s.title for s in rows],
+            "掌握度": [s.mastery for s in rows],
+            "状态": [s.label for s in rows],
+        }
     )
-    st.bar_chart(frame, height=max(200, 26 * len(rows)))
+    cbars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, size=17)
+        .encode(
+            y=alt.Y("知识点:N", sort="-x", axis=alt.Axis(title=None, labelLimit=180)),
+            x=alt.X(
+                "掌握度:Q",
+                scale=alt.Scale(domain=[0, 0.6]),
+                axis=alt.Axis(title=None, format=".0%", tickCount=4),
+            ),
+            color=alt.Color(
+                "状态:N",
+                scale=alt.Scale(
+                    domain=["生", "还行", "稳"],
+                    range=[theme.BAD, theme.WARN, theme.GOOD],
+                ),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            tooltip=["知识点", alt.Tooltip("掌握度:Q", format=".3f"), "状态"],
+        )
+    )
+    st.altair_chart(
+        cbars.properties(height=max(170, 32 * len(rows))).configure(
+            **theme.altair_theme()["config"]
+        ),
+        use_container_width=True,
+    )
 
-    st.markdown("**明细**")
+    theme.section("明细")
     st.dataframe(
         [
             {
@@ -778,7 +936,7 @@ def render_profile(
     )
 
     # ── 下一步：前置已满足的可学项 ──────────────────────────────────
-    st.markdown("**下一步可以学什么**")
+    theme.section("下一步可以学什么")
     if profile.next_concepts:
         st.write("、".join(concept_titles(graph, profile.next_concepts[:8])))
         if profile.missing_prerequisites:
@@ -790,20 +948,33 @@ def render_profile(
         st.success("前置都已满足，没有待补的项。")
 
     # ── 卡点诊断（错误模式）─────────────────────────────────────────
-    st.divider()
-    st.markdown("**卡点诊断**")
+    theme.section("卡点诊断", "你总卡在哪一类地方")
     if not profile.stall_patterns:
         st.caption(
             "还没有卡点记录。在训练页点「卡住了，先放着」时如果标了卡点，"
             "这里会显示你**总卡在哪一类地方**。"
         )
     else:
-        st.bar_chart(
-            pd.DataFrame(
-                {"次数": [count for _, count in profile.stall_patterns]},
-                index=[f"卡点 {i + 1}" for i, _ in profile.stall_patterns],
+        stall_frame = pd.DataFrame(
+            {
+                "卡点": [f"卡点 {i + 1}" for i, _ in profile.stall_patterns],
+                "次数": [count for _, count in profile.stall_patterns],
+            }
+        )
+        stall_chart = (
+            alt.Chart(stall_frame)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.BAD, size=46)
+            .encode(
+                x=alt.X("卡点:N", axis=alt.Axis(labelAngle=0, title=None)),
+                y=alt.Y("次数:Q", axis=alt.Axis(tickMinStep=1, title=None)),
+                tooltip=["卡点", "次数"],
+            )
+        )
+        st.altair_chart(
+            stall_chart.properties(height=165).configure(
+                **theme.altair_theme()["config"]
             ),
-            height=180,
+            use_container_width=True,
         )
         st.caption(
             "比「做对没做对」更有用的信号：如果总是卡在第 1 类，"

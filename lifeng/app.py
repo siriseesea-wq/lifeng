@@ -14,6 +14,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from lifeng import theme
 from lifeng.hint_engine import DeepSeekClient, HintError
 from lifeng.models import SkeletonError, load_problems
 from lifeng.views import (
@@ -74,13 +75,25 @@ def main() -> None:
     st.session_state.setdefault("problems_dir", str(PROBLEMS_DIR))
     st.session_state.setdefault("materials_dir", str(MATERIALS_DIR))
     st.session_state.setdefault("concepts_path", str(CONCEPTS_PATH))
+    theme.inject()
     _apply_pending_navigation()
 
-    st.title("砺锋 · 化学竞赛引导")
-    st.caption("苏格拉底式分层引导 —— 卡住时给方向，不直接给答案")
-
     with st.sidebar:
-        st.header("设置")
+        st.markdown(
+            f"""
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+              <div style="width:34px;height:34px;border-radius:9px;
+                          background:linear-gradient(135deg,{theme.BRAND_DEEP},{theme.ACCENT});
+                          display:flex;align-items:center;justify-content:center;
+                          color:#fff;font-weight:700;font-size:17px">砺</div>
+              <div>
+                <div style="font-weight:700;font-size:16px;color:{theme.INK}">砺锋</div>
+                <div style="font-size:11.5px;color:{theme.MUTED}">化学竞赛引导</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         student_code = st.text_input("学生代号", value="").strip()
         st.radio("页面", PAGES, key="nav", horizontal=False)
         st.divider()

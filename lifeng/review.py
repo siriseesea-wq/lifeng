@@ -40,6 +40,16 @@ PENALTY_INTERVAL = 1
 #: 一次复习会话最多推几题 —— 防止一次堆几十道把人压垮。
 MAX_REVIEW_ITEMS_PER_SESSION = 8
 
+#: 「稳」与「还行」的分界。
+#:
+#: **这两个阈值是单一属主**：``mastery_label``、``profile`` 的分类、
+#: ``theme.tone_for`` 的语义色都从这里取。早先三处各写了一遍 ——
+#: 一旦漂移就会出现「标签说稳、颜色是红的」这种自相矛盾的界面。
+MASTERED_THRESHOLD = 0.40
+
+#: 「还行」与「生」的分界。
+WEAK_THRESHOLD = 0.25
+
 
 @dataclass(frozen=True)
 class ScheduleResult:
@@ -177,9 +187,9 @@ def mastery_label(mastery: float) -> str:
     另：界面上**优先展示「下次复习间隔」**（具体、可行动），
     掌握度标签只是辅助 —— 掌握度本质是调度用的相对量，不是测量值。
     """
-    if mastery >= 0.40:
+    if mastery >= MASTERED_THRESHOLD:
         return "稳"
-    if mastery >= 0.25:
+    if mastery >= WEAK_THRESHOLD:
         return "还行"
     return "生"
 

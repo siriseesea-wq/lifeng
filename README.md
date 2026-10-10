@@ -86,7 +86,37 @@ tests/
 
 ---
 
-## 七个页面
+## 界面
+
+### 设计系统
+
+配色与组件集中在 `lifeng/theme.py`，原生控件配色在 `.streamlit/config.toml`。
+
+**为什么分成两处**：`config.toml` 管的是 Streamlit **原生控件**的颜色
+（单选、焦点环、滑块）—— 这些由 Streamlit 渲染时注入，CSS 覆盖既脆弱又容易漏。
+品牌自建组件（英雄区、指标卡、掌握度条）则由 `theme.py` 生成 HTML，
+完全在我们控制之下。**两处的品牌色必须一致**，有测试钉住这一点。
+
+**为什么自建组件用 HTML 而不是 CSS 覆盖 Streamlit**：Streamlit 内部 DOM
+的类名跨版本会变（它不承诺公开）。把所有样式压在那些类名上，是
+「今天好看、升级就崩」的做法。
+
+**一个必须记住的坑**：`st.markdown` 走 CommonMark 解析，**遇到空行就终止
+HTML 块**，之后的缩进行会被当成代码块原样显示 —— 症状是页面上直接出现
+`<div class="lf-stat">` 这样的源码。所以组件产出的 HTML 必须过
+`theme._compact()`。`tests/test_theme.py` 里有回归测试。
+
+### 图表
+
+用 **Altair**（Streamlit 自带，不增加依赖），比 `st.bar_chart` 能控制得多：
+圆角、配色、百分比轴、tooltip。
+
+知识点图谱用 Streamlit 内置的 `st.graphviz_chart`，**不需要 graphviz 包**。
+
+**界面上没有 emoji**：Linux 环境常常没有 emoji 字体，会显示成豆腐块。
+装饰性符号不值得让界面依赖一个可选字体。
+
+### 七个页面
 
 | 页面 | 学生来干什么 | 关键机制 |
 |---|---|---|
