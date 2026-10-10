@@ -87,3 +87,150 @@ class TestGenerateSubcommand:
         assert "API key" in combined, combined[-500:]
         assert "启动界面中" not in combined
 
+
+
+# --------------------------------------------------------------------------
+# 独立窗口启动
+# --------------------------------------------------------------------------
+
+
+class TestOpenBrowserWindow:
+    """以独立窗口打开，而不是浏览器标签页。
+
+    只有 Chromium 系浏览器支持 ``--app=``（无地址栏、无标签页）。
+    找不到时必须**退化而不是失败** —— 服务已经起来了，
+    打不开窗口不该让用户什么都用不了。
+    """
+
+    def test_uses_app_mode_when_chromium_found(self, monkeypatch):
+        import subprocess
+
+        from lifeng import launcher
+
+        launched: list[list[str]] = []
+        monkeypatch.setattr(launcher, "_find_chromium", lambda: "/usr/bin/chromium")
+        monkeypatch.setattr(
+            subprocess, "Popen", lambda argv, **kw: launched.append(argv)
+        )
+
+        how = launcher.open_browser_window("http://127.0.0.1:9999")
+
+        assert launched, "没有启动浏览器"
+        argv = launched[0]
+        assert "--app=http://127.0.0.1:9999" in argv, "没有用 --app 模式，会开出带地址栏的标签页"
+        assert any(a.startswith("--window-size=") for a in argv)
+        assert any(a.startswith("--user-data-dir=") for a in argv), (
+            "没有独立用户数据目录时，若用户已开着浏览器，"
+            "--app 可能被当成新标签页处理"
+        )
+        assert "独立窗口" in how
+
+    def test_falls_back_to_default_browser(self, monkeypatch):
+        import subprocess
+        import webbrowser
+
+        from lifeng import launcher
+
+        monkeypatch.setattr(launcher, "_find_chromium", lambda: None)
+        monkeypatch.setattr(webbrowser, "open", lambda url: True)
+
+        how = launcher.open_browser_window("http://127.0.0.1:9999")
+        assert "标签页" in how
+
+    def test_never_raises_when_everything_fails(self, monkeypatch):
+        """打不开窗口不该让程序挂掉 —— 服务已经起来了。"""
+        import webbrowser
+
+        from lifeng import launcher
+
+        monkeypatch.setattr(launcher, "_find_chromium", lambda: None)
+
+        def boom(url):
+            raise OSError("没有可用浏览器")
+
+        monkeypatch.setattr(webbrowser, "open", boom)
+        how = launcher.open_browser_window("http://127.0.0.1:9999")
+        assert "手动" in how
+
+    def test_popen_failure_falls_through(self, monkeypatch):
+        import subprocess
+        import webbrowser
+
+        from lifeng import launcher
+
+        monkeypatch.setattr(launcher, "_find_chromium", lambda: "/usr/bin/chromium")
+
+        def boom(argv, **kw):
+            raise OSError("权限不足")
+
+        monkeypatch.setattr(subprocess, "Popen", boom)
+        monkeypatch.setattr(webbrowser, "open", lambda url: True)
+        assert "标签页" in launcher.open_browser_window("http://x")
+
+
+class TestFreePort:
+    def test_returns_a_bindable_port(self):
+        import socket
+
+        from lifeng.launcher import _free_port
+
+        port = _free_port()
+        assert 1024 < port < 65536
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", port))  # 应当可绑定（刚刚才释放）
+
+    def test_avoids_the_default_port_trap(self):
+        """固定 8501 会在被占时让 Streamlit 换端口，而我们拼的 URL 不变。
+
+        结果就是打开窗口看到「无法连接」。
+        """
+        from pathlib import Path
+
+        from lifeng import launcher
+
+        src = Path(launcher.__file__).read_text(encoding="utf-8")
+        assert "_free_port()" in src
+        assert "--server.port=" in src
+
+
+class TestWaitAndOpen:
+    def test_waits_for_health_before_opening(self, monkeypatch):
+        """不等就绪会先看到「无法连接」的页面，用户会以为程序坏了。"""
+        from lifeng import launcher
+
+        import urllib.request
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        calls: list[str] = []
+        monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: FakeResponse())
+        monkeypatch.setattr(
+            launcher, "open_browser_window", lambda url: calls.append(url) or "独立窗口"
+        )
+
+        launcher._wait_and_open("http://x", "http://x/_stcore/health")
+        assert calls == ["http://x"]
+
+    def test_gives_up_quietly_on_timeout(self, monkeypatch):
+        from lifeng import launcher
+
+        import urllib.request
+
+        def boom(url, timeout):
+            raise OSError("not up")
+
+        opened: list[str] = []
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+        monkeypatch.setattr(
+            launcher, "open_browser_window", lambda url: opened.append(url)
+        )
+
+        launcher._wait_and_open("http://x", "http://x/_stcore/health", timeout=0.1)
+        assert opened == [], "服务没起来就不该开窗口"

@@ -1067,9 +1067,26 @@ def render_generate(
     with c3:
         domain = st.selectbox("方向", options=list(VALID_DOMAINS), index=0)
 
-    st.caption(
-        "每道题都会做三道校验：schema、骨架不含答案、知识点 id 真实存在。"
-        "任何一道不过就带反馈重试，重试仍不过则跳过，不会写进题库。"
+    st.markdown(
+        theme._compact(
+            """
+        <div class="lf-stats" style="margin:6px 0 14px">
+          <div class="lf-stat"><div class="lf-stat-label">关卡 1</div>
+            <div class="lf-stat-value brand" style="font-size:16px">格式</div>
+            <div class="lf-stat-hint">YAML 字段齐全、推理型</div></div>
+          <div class="lf-stat"><div class="lf-stat-label">关卡 2</div>
+            <div class="lf-stat-value brand" style="font-size:16px">不泄答案</div>
+            <div class="lf-stat-hint">骨架里不得含答案关键量</div></div>
+          <div class="lf-stat"><div class="lf-stat-label">关卡 3</div>
+            <div class="lf-stat-value brand" style="font-size:16px">知识点真实</div>
+            <div class="lf-stat-hint">id 必须在图谱里存在</div></div>
+          <div class="lf-stat"><div class="lf-stat-label">不过怎么办</div>
+            <div class="lf-stat-value warn" style="font-size:16px">带反馈重试</div>
+            <div class="lf-stat-hint">重试仍不过则跳过，不写盘</div></div>
+        </div>
+        """
+        ),
+        unsafe_allow_html=True,
     )
 
     if st.button("开始生成", type="primary"):
@@ -1104,9 +1121,15 @@ def render_generate(
         progress.progress(1.0, text="完成")
 
         if produced:
-            st.success(f"已生成 {len(produced)} 道，写入 {problems_dir}：")
+            st.success(f"已生成 {len(produced)} 道，写入 {problems_dir}")
             for line in produced:
-                st.markdown(f"- {line}")
+                st.markdown(
+                    theme._compact(
+                        f'<div class="lf-card new" style="padding:11px 16px">'
+                        f'<div class="lf-card-title">{line}</div></div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
             st.info("新题会出现在「训练」页的题号列表里。刷新页面即可看到。")
 
         for failure in failures:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from pathlib import Path
 
 
@@ -54,6 +55,140 @@ def _cwd_or_bundled(root: Path, name: str) -> Path:
     if cwd_path.exists():
         return cwd_path
     return root / name
+
+
+# --------------------------------------------------------------------------
+# 以「独立窗口」打开，而不是浏览器标签页
+# --------------------------------------------------------------------------
+
+#: 各平台上 Chromium 系浏览器的常见位置与可执行名。
+#:
+#: 为什么要找这类浏览器：只有它们支持 ``--app=`` —— 打开的是**没有地址栏、
+#: 没有标签页**的独立窗口，看起来就是一个桌面程序。默认浏览器
+#: （Firefox / Safari）没有等价能力，退化为普通标签页。
+_CHROMIUM_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "win32": (
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        "msedge",
+        "chrome",
+    ),
+    "darwin": (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ),
+    "linux": (
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "microsoft-edge",
+        "brave-browser",
+    ),
+}
+
+
+def _find_chromium() -> str | None:
+    """找一个 Chromium 系浏览器；找不到返回 ``None``。"""
+    import shutil
+
+    key = "win32" if sys.platform.startswith("win") else sys.platform
+    if key.startswith("linux"):
+        key = "linux"
+    elif key.startswith("darwin"):
+        key = "darwin"
+
+    for candidate in _CHROMIUM_CANDIDATES.get(key, ()):
+        if os.path.isabs(candidate):
+            if Path(candidate).is_file():
+                return candidate
+        else:
+            found = shutil.which(candidate)
+            if found:
+                return found
+    return None
+
+
+def open_browser_window(url: str) -> str:
+    """打开界面，优先用**独立窗口**。
+
+    返回实际采用的方式，供日志显示。
+
+    刻意不抛异常：打不开窗口不该让整个程序挂掉 —— 服务已经起来了，
+    用户至少还能手动打开网址。
+    """
+    import subprocess
+    import webbrowser
+
+    browser = _find_chromium()
+    if browser:
+        try:
+            creationflags = 0
+            if sys.platform.startswith("win"):
+                # Windows 上不加这个会连带弹出一个控制台窗口
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.Popen(
+                [
+                    browser,
+                    f"--app={url}",
+                    "--window-size=1280,900",
+                    # 用独立的用户数据目录，避免和用户日常浏览器抢配置文件，
+                    # 也避免"已有一个实例在运行"时 --app 被当成新标签页处理
+                    f"--user-data-dir={Path.home() / '.lifeng-browser'}",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+            return f"独立窗口（{Path(browser).name}）"
+        except OSError:
+            pass  # 落到下面的默认浏览器
+
+    try:
+        if webbrowser.open(url):
+            return "浏览器标签页（未找到 Chromium 系浏览器，退化为标签页）"
+    except Exception:  # noqa: BLE001
+        pass
+    return "未能自动打开，请手动访问上面的网址"
+
+
+def _wait_and_open(url: str, health_url: str, timeout: float = 60.0) -> None:
+    """等健康检查通过再开窗口 —— 否则会先看到一个"无法连接"的页面。"""
+    import time
+    import urllib.error
+    import urllib.request
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(health_url, timeout=2) as response:
+                if response.status == 200:
+                    break
+        except (urllib.error.URLError, OSError, ValueError):
+            time.sleep(0.4)
+    else:
+        return  # 超时就不开了，Streamlit 自己会打印网址
+
+    how = open_browser_window(url)
+    print(f"[砺锋] 已在{how}中打开。")
+
+
+def _free_port() -> int:
+    """要一个空闲端口。
+
+    固定用 8501 会在端口被占时让 Streamlit 换成别的端口，
+    而我们拼的 URL 还停在 8501 —— 窗口打开就是「无法连接」。
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def _ensure_streamlit_credentials() -> bool:
@@ -114,7 +249,14 @@ def main() -> int:
 
     print(f"[砺锋] 题库目录：{problems}")
     print(f"[砺锋] 数据文件：{os.environ['LIFENG_DB']}")
-    print("[砺锋] 启动界面中……浏览器会自动打开。按 Ctrl+C 结束。")
+
+    # 端口自己选并固定下来。
+    #
+    # 用默认 8501 时，若端口被占 Streamlit 会悄悄换一个，
+    # 而我们拼的 URL 还停在 8501 —— 打开窗口看到的是「无法连接」。
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}"
+    health = f"{url}/_stcore/health"
 
     args = [
         "streamlit",
@@ -122,6 +264,14 @@ def main() -> int:
         str(script),
         "--global.developmentMode=false",
         "--browser.gatherUsageStats=false",
+        # 始终 headless：浏览器由我们自己开。
+        #
+        # Streamlit 自己开的是**标签页**（地址栏、标签栏一应俱全），
+        # 而现在要的是没有这些的独立窗口 —— 让它同时也开一个，
+        # 用户会看到两个界面。
+        "--server.headless=true",
+        "--server.address=127.0.0.1",
+        f"--server.port={port}",
         # 主题必须在这里传，不能只靠仓库里的 .streamlit/config.toml：
         # Streamlit 从**当前工作目录**找那个文件，而打包版是在用户
         # 自己的目录里运行的，那里没有这个文件 —— 不传的话，
@@ -132,11 +282,20 @@ def main() -> int:
         "--theme.secondaryBackgroundColor=#F6F8FC",
         "--theme.textColor=#0F172A",
     ]
+
     if not _ensure_streamlit_credentials():
-        # 写不进凭据文件（只读 home 等）时，headless 同样能跳过邮箱询问，
-        # 代价是不会自动开浏览器。
-        print("[砺锋] 无法写入 Streamlit 凭据，改用 headless 模式，请手动打开提示的网址。")
-        args.append("--server.headless=true")
+        # 凭据写不进去时，headless 之外的路径都不通；此时仍然只能靠用户
+        # 自己打开网址，所以把网址打印得显眼一些。
+        print("[砺锋] 无法写入 Streamlit 凭据，请手动打开下面的网址。")
+
+    print(f"[砺锋] 界面地址：{url}")
+    print("[砺锋] 正在启动，就绪后会自动打开窗口。按 Ctrl+C 结束。")
+
+    # 等健康检查通过再开窗口 —— 不等的话先看到一个"无法连接"的页面，
+    # 用户会以为程序坏了。放在后台线程里，因为 stcli.main() 是阻塞的。
+    threading.Thread(
+        target=_wait_and_open, args=(url, health), daemon=True
+    ).start()
 
     sys.argv = args
     return stcli.main()
