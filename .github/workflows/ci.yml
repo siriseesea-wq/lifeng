@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 运行测试
+        run: python -m pytest tests/ -q
+
+      - name: 题库 schema 校验
+        run: python -m lifeng.models problems/
+
+      # 独立跑一次边界测试，让它失败时在 CI 上更显眼
+      - name: 存储后端边界检查（仅 store.py 可 import sqlite3）
+        run: python -m pytest tests/test_storage_boundary.py -q
