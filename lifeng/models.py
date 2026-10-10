@@ -17,6 +17,7 @@ import yaml
 
 Domain = Literal["organic", "physical", "structural", "inorganic", "analytical"]
 ProblemType = Literal["reasoning", "memory"]
+SkeletonSource = Literal["human", "ai"]
 
 VALID_DOMAINS: tuple[str, ...] = (
     "organic",
@@ -26,6 +27,13 @@ VALID_DOMAINS: tuple[str, ...] = (
     "analytical",
 )
 VALID_TYPES: tuple[str, ...] = ("reasoning", "memory")
+
+#: 骨架由谁写。
+#:
+#: Design Spec 决策 4 是「**人工**标注骨架 + LLM 措辞」，实验要验证的正是这个组合。
+#: 由 AI 生成的骨架是**另一个命题**，因此必须可区分 —— 否则将来真做实验时，
+#: 无法说明参与验证的骨架里有几条是 AI 写的。
+VALID_SKELETON_SOURCES: tuple[str, ...] = ("human", "ai")
 
 #: 计划 T6 的验收要求：每题至少 3 个卡点。
 MIN_PITFALLS = 3
@@ -65,6 +73,8 @@ class Problem:
     answer: str
     key_quantities: tuple[str, ...]
     skeleton: Skeleton | None
+    #: 骨架来源；默认 human。AI 出题时置为 "ai"（见 VALID_SKELETON_SOURCES 说明）。
+    skeleton_source: SkeletonSource = "human"
 
     @property
     def is_reasoning(self) -> bool:
@@ -148,17 +158,13 @@ def _parse_key_quantities(raw: dict, path: Path) -> tuple[str, ...]:
 # --------------------------------------------------------------------------
 
 
-def load_problem(path: str | Path) -> Problem:
-    """从单个 YAML 文件装载题目并做完整 schema 校验。"""
-    path = Path(path)
-    if not path.is_file():
-        raise SkeletonError(f"{path}: 文件不存在")
+def parse_problem(raw: object, source: str | Path = "<memory>") -> Problem:
+    """从已解析的映射校验并构造 ``Problem``。
 
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise SkeletonError(f"{path}: YAML 解析失败 —— {exc}") from exc
-
+    与 :func:`load_problem` 分离，使**生成器**能在写盘前先校验，
+    避免把不合格的题写进题库再回头清理。
+    """
+    path = source
     mapping = _require_mapping(raw, path, "<root>")
 
     problem_id = _require_str(mapping, "id", path, "<root>")
@@ -175,6 +181,13 @@ def load_problem(path: str | Path) -> Problem:
     statement = _require_str(mapping, "statement", path, "<root>")
     answer = _require_str(mapping, "answer", path, "<root>")
     key_quantities = _parse_key_quantities(mapping, path)
+
+    raw_source = mapping.get("skeleton_source", "human")
+    if raw_source not in VALID_SKELETON_SOURCES:
+        raise SkeletonError(
+            f"{path}: `skeleton_source` 取值非法：{raw_source!r}，"
+            f"应为 {VALID_SKELETON_SOURCES}"
+        )
 
     raw_skeleton = mapping.get("skeleton")
     skeleton: Skeleton | None = None
@@ -199,7 +212,22 @@ def load_problem(path: str | Path) -> Problem:
         answer=answer,
         key_quantities=key_quantities,
         skeleton=skeleton,
+        skeleton_source=raw_source,  # type: ignore[arg-type]
     )
+
+
+def load_problem(path: str | Path) -> Problem:
+    """从单个 YAML 文件装载题目并做完整 schema 校验。"""
+    path = Path(path)
+    if not path.is_file():
+        raise SkeletonError(f"{path}: 文件不存在")
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise SkeletonError(f"{path}: YAML 解析失败 —— {exc}") from exc
+
+    return parse_problem(raw, path)
 
 
 def load_problems(directory: str | Path) -> list[Problem]:

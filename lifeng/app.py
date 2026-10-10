@@ -175,7 +175,15 @@ def main() -> None:
 
     # 标注卫生警告（仅实验者可见的信息，用 expander 收纳）
     with st.expander("实验者信息（学生可忽略）"):
-        st.write(f"领域：{problem.domain} · 类型：{problem.type}")
+        st.write(
+            f"领域：{problem.domain} · 类型：{problem.type} · "
+            f"骨架来源：{problem.skeleton_source}"
+        )
+        if problem.skeleton_source == "ai":
+            st.info(
+                "本条骨架由 AI 生成。Design Spec 决策 4 验证的是"
+                "「人工骨架 + LLM 措辞」—— AI 骨架属于另一个命题，分析时需区分。"
+            )
         leaks = skeleton_leaks_answer(problem)
         if leaks:
             st.warning(f"骨架标注含答案关键量，结构性防泄漏已失效：{leaks}")
