@@ -15,3 +15,11 @@ store.db-journal
 .DS_Store
 .idea/
 .vscode/
+
+# 打包产物
+dist/
+build/
+*.spec.bak
+
+# 构建日志
+logs/
