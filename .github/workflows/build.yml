@@ -1,0 +1,74 @@
+name: Build Executables
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 每个平台的产物名必须互不相同 ——
+          # mind-mirror 曾因 linux/macos 产物同名被自动去重，导致 macOS 未上架。
+          - os: ubuntu-latest
+            artifact: lifeng-linux-x86_64
+            archive: lifeng-linux-x86_64.tar.gz
+          - os: windows-latest
+            artifact: lifeng-windows-x86_64
+            archive: lifeng-windows-x86_64.zip
+          - os: macos-latest
+            artifact: lifeng-macos-arm64
+            archive: lifeng-macos-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: 安装依赖与 PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      # 先测再打包：不发布未通过测试的产物
+      - name: 运行测试
+        run: python -m pytest tests/ -q
+
+      - name: 构建可执行文件
+        run: python -m PyInstaller lifeng.spec --noconfirm --clean
+
+      - name: 打包产物（Linux / macOS）
+        if: runner.os != 'Windows'
+        run: tar -czf ${{ matrix.archive }} -C dist lifeng
+
+      - name: 打包产物（Windows）
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/lifeng -DestinationPath ${{ matrix.archive }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

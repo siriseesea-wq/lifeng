@@ -118,6 +118,32 @@ for p in load_problems("problems"):
 
 ---
 
+## 打包成可执行文件
+
+用 PyInstaller（onedir 模式，非 onefile —— 本应用依赖体积大，
+onefile 每次启动都要解压数百 MB 到临时目录）。
+
+```bash
+.venv/bin/pip install pyinstaller
+.venv/bin/python -m PyInstaller lifeng.spec --noconfirm --clean
+cd dist/lifeng && ./lifeng        # Windows 上是 lifeng.exe
+```
+
+产物是 `dist/lifeng/` 整个目录（约 320MB，因为 Streamlit 硬依赖
+pyarrow/pandas/numpy）。**分发时要打包整个目录**，不能只拷可执行文件。
+
+### 平台支持
+
+| 平台 | 支持 | 说明 |
+|---|---|---|
+| Windows / Linux / macOS | ✅ | 由 `.github/workflows/build.yml` 在三个平台原生构建；推 `v*` tag 自动发 Release |
+| **Android** | ❌ **不打包，也不需要** | Streamlit 是**服务端 Web 框架**，界面由浏览器渲染、Python 服务端通过 websocket 驱动。`python-for-android`/`buildozer` 打的是 Kivy（另一套 GUI 工具包），无法打包 Streamlit。所谓"Streamlit 安卓方案"都是 **WebView 壳指向一个已运行的服务器**，并没有把应用装进去。<br>**正确用法**：学生在安卓浏览器里打开你的局域网地址即可 —— 实测 Streamlit 默认绑定所有网卡。 |
+
+> PyInstaller 产物**不做跨平台交叉编译**：Windows 的 exe 必须在 Windows 上构建。
+> 这正是 CI 用三平台矩阵的原因。
+
+---
+
 ## 已知局限
 
 `leak_check` 是字符串黑名单，**拦不住改述型泄漏**
