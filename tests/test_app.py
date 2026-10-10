@@ -1,7 +1,7 @@
 """T5 单元测试 —— 学生界面的可测核心。
 
 Streamlit 层无法在无浏览器环境下点击验证，因此把核心交互
-（:func:`request_hint` / :func:`log_baseline_attempt` / :func:`next_level`）
+（:func:`request_hint` / :func:`next_level` / :func:`finish_problem`）
 抽成纯函数单独测试；UI 层另有启动验证（见 README）。
 """
 
@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from lifeng.app import MAX_LEVEL, log_baseline_attempt, next_level, request_hint
 from lifeng.hint_engine import HintError
 from lifeng.models import load_problem
+from lifeng.review import PENALTY_INTERVAL
 from lifeng.store import Store, StoreError
+from lifeng.views import MAX_LEVEL, finish_problem, next_level, request_hint
 
 
 class ScriptedClient:
@@ -99,7 +100,7 @@ class TestRequestHint:
 class TestBaseline:
     def test_logs_level_zero_without_hint(self, problem, store):
         sid = store.create_session(problem.id, "S1", "baseline")
-        log_baseline_attempt("我自己做到了第二步", store=store, session_id=sid)
+        store.log_attempt(sid, "我自己做到了第二步", level_requested=0)
 
         row = list(store.iter_attempts())[0]
         assert row["level_requested"] == 0
@@ -176,3 +177,58 @@ class TestAttachHintStoreGuard:
     def test_rejects_unknown_attempt(self, store):
         with pytest.raises(StoreError):
             store.attach_hint(99999, 1, "提示")
+
+
+class TestFinishProblem:
+    """结题：把「用了第几层提示」翻译成复习计划。
+
+    这是本次集成的关键接口 —— 提示层级 → outcome → SM-2 间隔。
+    它决定了「学生下次什么时候再见到这道题」。
+    """
+
+    def test_no_hint_gets_longer_interval(self, problem, store):
+        result = finish_problem(
+            problem, store=store, student_code="S1", max_level_used=0, solved=True
+        )
+        assert result.interval_days == 3          # outcome 1.0 → 前进一档
+        assert result.new_mastery > 0.15
+
+    def test_level3_gets_penalty_interval(self, problem, store):
+        """第 3 层才突破 = 提示已相当具体，明天就该重做。
+
+        注意：这里只断言**间隔**，不断言掌握度方向。
+        从 0.15 的低起点看，"部分对"其实**高于模型预期**（模型只预测约 0.43），
+        所以掌握度会微升 —— 这是模型该有的行为，不是 bug。
+        真正体现惩罚的是间隔回到最短档。
+        """
+        result = finish_problem(
+            problem, store=store, student_code="S1", max_level_used=3, solved=True
+        )
+        assert result.interval_days == PENALTY_INTERVAL
+
+        # 相比无提示解出（outcome 1.0），部分对的掌握度增幅应显著更小
+        full = finish_problem(
+            problem, store=store, student_code="S2", max_level_used=0, solved=True
+        )
+        assert result.mastery_delta < full.mastery_delta
+
+    def test_unsolved_resets_to_tomorrow(self, problem, store):
+        result = finish_problem(
+            problem, store=store, student_code="S1", max_level_used=1, solved=False
+        )
+        assert result.interval_days == PENALTY_INTERVAL
+
+    def test_repeat_updates_same_row(self, problem, store):
+        finish_problem(problem, store=store, student_code="S1", max_level_used=0, solved=True)
+        finish_problem(problem, store=store, student_code="S1", max_level_used=0, solved=True)
+
+        rows = store.student_overview("S1")
+        assert len(rows) == 1, "同一学生同一题只应有一条复习记录"
+        assert rows[0]["review_count"] == 2
+
+    def test_different_students_are_isolated(self, problem, store):
+        finish_problem(problem, store=store, student_code="S1", max_level_used=0, solved=True)
+        finish_problem(problem, store=store, student_code="S2", max_level_used=3, solved=True)
+
+        assert store.student_overview("S1")[0]["interval_days"] == 3
+        assert store.student_overview("S2")[0]["interval_days"] == PENALTY_INTERVAL

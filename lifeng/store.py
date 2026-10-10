@@ -319,6 +319,38 @@ class Store:
             ).fetchone()[0],
         }
 
+    @_translate_storage_errors
+    def elapsed_seconds(self, session_id: int) -> int | None:
+        """该会话从开始到现在的秒数。
+
+        计时不需要新字段：``sessions.started_at`` 与当前时间就够。
+        """
+        row = self._conn.execute(
+            "SELECT CAST((julianday('now','localtime') - julianday(started_at)) * 86400 AS INTEGER)"
+            " AS secs FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None or row["secs"] is None:
+            return None
+        return max(0, int(row["secs"]))
+
+    @_translate_storage_errors
+    def attempt_count(self, session_id: int) -> int:
+        return int(
+            self._conn.execute(
+                "SELECT COUNT(*) FROM attempts WHERE session_id = ?", (session_id,)
+            ).fetchone()[0]
+        )
+
+    @_translate_storage_errors
+    def max_hint_level(self, session_id: int) -> int:
+        """该会话用过的最高提示层级（0 = 全程无提示）。"""
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(level_requested), 0) FROM attempts WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return int(row[0] or 0)
+
     # -- 复习状态（纯读写；调度编排在 lifeng/review.py）-------------------
 
     @_translate_storage_errors
