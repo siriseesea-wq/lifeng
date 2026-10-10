@@ -196,7 +196,8 @@ skeleton:
 |---|---|
 | Files | `lifeng/store.py` |
 | 目的 | 持久化每次尝试与提示层级，供 T9 分析 |
-| 最小改动 | 建表 `sessions(id, problem_id, student_code, started_at)`、`attempts(id, session_id, level_requested, attempt_text, hint_text, leaked, created_at, progressed)` |
+| 最小改动 | 建表 `sessions(id, problem_id, student_code, mode, started_at)`、`attempts(id, session_id, level_requested, attempt_text, hint_text, leaked, created_at, progressed)` |
+| 执行期修正 | 原 schema 漏了 `sessions.mode`（`baseline`/`hint`）。T7 要求 A/B 分半测基线，T9 要分别产出基线推进率与实验推进率 —— 不区分 mode 则 T9 无法计算。已在 T2 实现中补上并加 `CHECK` 约束 |
 | 兼容影响 | 无 |
 | 验证 | 调用 `store.log_attempt(...)` 后 `sqlite3 store.db "select count(*) from attempts"` 递增 |
 
