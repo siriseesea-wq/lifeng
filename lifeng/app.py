@@ -19,6 +19,7 @@ from lifeng.hint_engine import DeepSeekClient, HintError
 from lifeng.models import SkeletonError, load_problems
 from lifeng.views import (
     render_generate,
+    render_model_settings,
     render_graph,
     render_profile,
     render_progress,
@@ -40,11 +41,22 @@ MODE_LABELS = {"hint": "实验组（可请求提示）", "baseline": "基线组�
 
 @st.cache_resource
 def _client():
-    """模型客户端只建一次。返回 (client, 错误消息)。"""
+    """模型客户端只建一次。返回 (client, 错误消息)。
+
+    用 ``cache_resource`` 是因为每次 Streamlit 重跑脚本都新建客户端
+    既慢又浪费连接。代价是**配置变了必须显式清缓存** ——
+    否则用户在界面上填好密钥、点保存，程序还在用旧的那份，
+    表现为"保存了但没用"，非常难自己想明白。
+    """
     try:
         return DeepSeekClient(), None
     except HintError as exc:
         return None, str(exc)
+
+
+def _forget_client() -> None:
+    """配置变更后丢掉缓存，下次访问重新构建。"""
+    _client.clear()
 
 
 def _apply_pending_navigation() -> None:
@@ -100,6 +112,10 @@ def main() -> None:
             """,
             unsafe_allow_html=True,
         )
+        # 模型设置排在最前：没配好密钥，出题与提示都用不了
+        render_model_settings(on_saved=_forget_client)
+        st.divider()
+
         student_code = st.text_input("学生代号", value="").strip()
         st.radio("页面", PAGES, key="nav", horizontal=False)
         st.divider()
@@ -125,9 +141,7 @@ def main() -> None:
             client, err = _client()
             if client is None:
                 st.warning("未配置模型密钥，提示功能不可用（其余功能正常）")
-                with st.expander("如何配置"):
-                    st.code("export DEEPSEEK_API_KEY=sk-...", language="bash")
-                    st.caption(err or "")
+                st.caption("在上面的「模型设置」里填写并保存即可，不需要改环境变量。")
         elif page == "出题":
             client, err = _client()
             client_error = err

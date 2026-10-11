@@ -23,6 +23,7 @@ import altair as alt
 import streamlit as st
 
 from lifeng import prompts, theme
+from lifeng.hint_engine import DeepSeekClient
 from lifeng.concepts import ConceptError, ConceptGraph
 from lifeng.generator import GenerationError, generate_batch
 from lifeng.models import MIN_PITFALLS, VALID_DOMAINS
@@ -272,7 +273,7 @@ def render_train(
 
     c1, c2 = st.columns(2)
     with c1:
-        submit = st.button("提交本次尝试", use_container_width=True)
+        submit = st.button("提交本次尝试", width="stretch")
     with c2:
         can_hint = mode == "hint" and st.session_state.level < 4
         ask_hint = st.button(
@@ -280,7 +281,7 @@ def render_train(
             if can_hint
             else ("已到最后一层" if mode == "hint" else "基线组无提示"),
             disabled=not can_hint,
-            use_container_width=True,
+            width="stretch",
         )
 
     if not student_code:
@@ -353,9 +354,9 @@ def render_train(
     st.caption("做完就点一下，系统据此安排复习时间。")
     d1, d2 = st.columns(2)
     with d1:
-        solved = st.button("我做出来了", use_container_width=True, type="primary")
+        solved = st.button("我做出来了", width="stretch", type="primary")
     with d2:
-        gave_up = st.button("卡住了，先放着", use_container_width=True)
+        gave_up = st.button("卡住了，先放着", width="stretch")
 
     if solved or gave_up:
         max_level = st.session_state.level
@@ -463,7 +464,7 @@ def render_today(*, student_code: str, db_path: Path, problems_dir: Path) -> Non
                 unsafe_allow_html=True,
             )
         with btn_col:
-            if st.button("开始", key=f"today_{item.problem_id}", use_container_width=True):
+            if st.button("开始", key=f"today_{item.problem_id}", width="stretch"):
                 st.session_state.pending_problem = item.problem_id
                 st.session_state.pending_page = "训练"
                 st.rerun()
@@ -538,7 +539,7 @@ def render_review(*, student_code: str, db_path: Path) -> None:
         (base.mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.BRAND, size=34))
         .properties(height=190)
         .configure(**theme.altair_theme()["config"]),
-        use_container_width=True,
+        width="stretch",
     )
     if overdue:
         st.caption(f"另有 **{overdue}** 道已逾期未复习。")
@@ -572,7 +573,7 @@ def render_review(*, student_code: str, db_path: Path) -> None:
                 unsafe_allow_html=True,
             )
         with redo_col:
-            if st.button("重做", key=f"redo_{pid}", use_container_width=True):
+            if st.button("重做", key=f"redo_{pid}", width="stretch"):
                 # 不直接改 st.session_state.nav / problem_id ——
                 # 那两个 widget 已经实例化，改了会报错。
                 # 交给 app.py 在下一轮开头处理。
@@ -660,7 +661,7 @@ def render_progress(*, student_code: str, db_path: Path) -> None:
         .properties(height=max(170, 30 * len(rows)))
         .configure(**theme.altair_theme()["config"])
     )
-    st.altair_chart(bars, use_container_width=True)
+    st.altair_chart(bars, width="stretch")
 
     theme.section("明细")
     st.dataframe(
@@ -675,7 +676,7 @@ def render_progress(*, student_code: str, db_path: Path) -> None:
             }
             for r in rows
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -701,7 +702,7 @@ def render_progress(*, student_code: str, db_path: Path) -> None:
         )
         st.altair_chart(
             hint_chart.properties(height=170).configure(**theme.altair_theme()["config"]),
-            use_container_width=True,
+            width="stretch",
         )
         st.caption(
             "第 1~2 层就能推进，说明方向性提问真的起作用；"
@@ -799,7 +800,7 @@ def render_graph(
         weak = set(profile.weak)
         st.caption(f"{student_code}：{profile.headline}")
 
-    st.graphviz_chart(graph.to_dot(emphasise=known, missing=weak), use_container_width=True)
+    st.graphviz_chart(graph.to_dot(emphasise=known, missing=weak), width="stretch")
     st.caption("实线箭头 = 前置依赖；虚线 = 相关概念。绿色已稳、红色薄弱、灰色未触及。")
 
     theme.stats(
@@ -919,7 +920,7 @@ def render_profile(
         cbars.properties(height=max(170, 32 * len(rows))).configure(
             **theme.altair_theme()["config"]
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
     theme.section("明细")
@@ -933,7 +934,7 @@ def render_profile(
             }
             for s in rows
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -976,7 +977,7 @@ def render_profile(
             stall_chart.properties(height=165).configure(
                 **theme.altair_theme()["config"]
             ),
-            use_container_width=True,
+            width="stretch",
         )
         st.caption(
             "比「做对没做对」更有用的信号：如果总是卡在第 1 类，"
@@ -1165,3 +1166,117 @@ def render_generate(
                     )
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"生成失败：{exc}")
+
+
+# --------------------------------------------------------------------------
+# 模型设置
+# --------------------------------------------------------------------------
+
+
+def render_model_settings(on_saved=None) -> None:
+    """侧栏里的 API 配置。
+
+    **为什么要有它**：让老师去改系统环境变量，对一个「双击就用」的工具
+    是硬门槛 —— Windows 要开系统属性、macOS 要改 shell 配置。
+    写在这里，填一次就好。
+
+    密钥只显示掩码；保存后落在用户配置目录（权限 0600），
+    不写进仓库、不写进日志。
+    """
+    from lifeng.settings import (
+        KNOWN_BASE_URLS,
+        KNOWN_MODELS,
+        env_key_present,
+        load_settings,
+        save_settings,
+    )
+
+    current = load_settings()
+    overridden = env_key_present()
+
+    with st.expander("模型设置", expanded=not current.configured):
+        if overridden:
+            st.caption("已由环境变量 `DEEPSEEK_API_KEY` 提供，界面上的填写会被它覆盖。")
+        else:
+            st.caption(f"当前密钥：`{current.masked_key}`")
+
+        key_input = st.text_input(
+            "API Key",
+            value="",
+            type="password",
+            placeholder="sk-..." if not current.configured else "留空则不修改",
+            key="settings_api_key",
+            help="只保存在本机，不会上传到任何地方。",
+        )
+
+        base_url = st.text_input(
+            "接口地址",
+            value=current.base_url,
+            key="settings_base_url",
+            help="换供应商或走本地代理时改这里。",
+        )
+
+        model = st.selectbox(
+            "模型",
+            options=list(KNOWN_MODELS),
+            index=(
+                list(KNOWN_MODELS).index(current.model)
+                if current.model in KNOWN_MODELS
+                else 0
+            ),
+            key="settings_model",
+        )
+
+        # 常见端点的快捷填充 —— 手打 URL 很容易错
+        with st.expander("常见接口地址"):
+            for url in KNOWN_BASE_URLS:
+                st.code(url, language=None)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("保存", type="primary", key="settings_save"):
+                updated = replace_settings(current, key_input, base_url, model)
+                try:
+                    path = save_settings(updated)
+                    st.success("已保存")
+                    st.caption(str(path))
+                    if on_saved is not None:
+                        on_saved()
+                except OSError as exc:
+                    st.error(f"保存失败：{exc}")
+        with c2:
+            if st.button("测试连接", key="settings_test"):
+                probe = replace_settings(current, key_input, base_url, model)
+                if not probe.configured:
+                    st.warning("先填 API Key。")
+                else:
+                    try:
+                        client = DeepSeekClient(
+                            api_key=probe.api_key,
+                            model=probe.model,
+                            base_url=probe.base_url,
+                        )
+                    except HintError as exc:
+                        st.error(str(exc))
+                    else:
+                        with st.spinner("正在请求…"):
+                            ok, message = client.test_connection()
+                        (st.success if ok else st.error)(message)
+
+
+def replace_settings(current, key_input: str, base_url: str, model: str):
+    """把界面上的输入合成一份新配置。
+
+    密钥留空表示**不修改** —— 界面上显示的是掩码，
+    若把掩码当成新密钥存回去，密钥就被毁了。
+    """
+    from dataclasses import replace as _replace
+
+    from lifeng.settings import DEFAULT_BASE_URL, DEFAULT_MODEL
+
+    return _replace(
+        current,
+        api_key=key_input.strip() or current.api_key,
+        base_url=base_url.strip() or DEFAULT_BASE_URL,
+        model=model.strip() or DEFAULT_MODEL,
+    )

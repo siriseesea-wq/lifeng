@@ -58,6 +58,116 @@ def _cwd_or_bundled(root: Path, name: str) -> Path:
 
 
 # --------------------------------------------------------------------------
+# 日志与致命错误提示
+#
+# 打包成**窗口模式**（console=False）后双击不再弹黑框 —— 那正是「图形化」
+# 的第一步。但代价是 stdout 没了，原来的诊断信息全部消失。
+# 所以这两件事必须一起做：**去掉控制台，同时把诊断接到日志文件与弹窗上**。
+# 只去掉控制台而不补日志，等于把问题藏起来。
+# --------------------------------------------------------------------------
+
+
+def log_path() -> Path:
+    """日志文件位置：运行目录下，名字固定，方便让老师发过来。"""
+    return Path.cwd() / "lifeng.log"
+
+
+def log(message: str) -> None:
+    """写日志。
+
+    有 stdout 时也打印 —— 从源码运行时仍能直接在终端看到。
+    窗口模式下 ``sys.stdout`` 是 ``None`` 或不可写，**直接 ``print`` 会抛异常**，
+    这是打包成无控制台后最常见的崩溃来源。
+    """
+    line = message if message.endswith("\n") else message + "\n"
+    try:
+        with log_path().open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except OSError:
+        pass
+
+    stream = sys.stdout
+    if stream is not None:
+        try:
+            stream.write(line)
+            stream.flush()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
+def ensure_standard_streams() -> None:
+    """保证 ``sys.stdout`` / ``sys.stderr`` 可用。
+
+    **这必须在任何别的库之前调用。** Windows 上的窗口模式
+    （``console=False``）会让这两个流变成 ``None`` —— 任何
+    ``print`` 或日志写入都会抛 ``AttributeError``。
+
+    Linux 上 ``console=False`` 不改变流（可执行文件本身相同），
+    所以这个问题**只会在 Windows 真机上出现**，本机测不出来。
+    把流接到日志文件上，两个平台就都安全了。
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+
+    try:
+        sink = log_path().open("a", encoding="utf-8", errors="replace")
+    except OSError:
+        # 连日志都开不了就退回黑洞，至少不要让库崩
+        class _Null:
+            def write(self, _data: str) -> int:
+                return 0
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return False
+
+        sink = _Null()  # type: ignore[assignment]
+
+    if sys.stdout is None:
+        sys.stdout = sink  # type: ignore[assignment]
+    if sys.stderr is None:
+        sys.stderr = sink  # type: ignore[assignment]
+
+
+def fatal(message: str) -> None:
+    """报告启动期的致命错误。
+
+    窗口模式下没有控制台能显示它 —— 用户只会看到「双击没反应」。
+    所以这里额外弹一个原生对话框；弹不出来时至少日志里有记录。
+    """
+    log(f"[砺锋] 错误：{message}")
+
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                f"{message}\n\n详细信息见：\n{log_path()}",
+                "砺锋 · 启动失败",
+                0x10,  # MB_ICONERROR
+            )
+            return
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        import tkinter
+        from tkinter import messagebox
+
+        root = tkinter.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "砺锋 · 启动失败", f"{message}\n\n详细信息见：{log_path()}"
+        )
+        root.destroy()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# --------------------------------------------------------------------------
 # 以「独立窗口」打开，而不是浏览器标签页
 # --------------------------------------------------------------------------
 
@@ -175,7 +285,7 @@ def _wait_and_open(url: str, health_url: str, timeout: float = 60.0) -> None:
         return  # 超时就不开了，Streamlit 自己会打印网址
 
     how = open_browser_window(url)
-    print(f"[砺锋] 已在{how}中打开。")
+    log(f"[砺锋] 已在{how}中打开。")
 
 
 def _free_port() -> int:
@@ -213,6 +323,9 @@ def _ensure_streamlit_credentials() -> bool:
 
 def main() -> int:
     # 必须先做：本函数的 banner 含中文，Windows 非中文控制台上会直接崩溃
+    # 必须在导入 streamlit 之前 —— 它一被导入就会配置日志输出
+    ensure_standard_streams()
+
     from lifeng.console import make_output_safe
 
     make_output_safe()
@@ -235,7 +348,7 @@ def main() -> int:
     script = _app_script(root)
 
     if not script.is_file():
-        print(f"[砺锋] 找不到界面文件：{script}", file=sys.stderr)
+        fatal(f"找不到界面文件：{script}")
         return 1
 
     problems = _problems_dir(root)
@@ -247,8 +360,8 @@ def main() -> int:
     # 数据落在**运行目录**，而不是解包临时目录 —— 否则每次启动都丢记录
     os.environ.setdefault("LIFENG_DB", str(Path.cwd() / "store.db"))
 
-    print(f"[砺锋] 题库目录：{problems}")
-    print(f"[砺锋] 数据文件：{os.environ['LIFENG_DB']}")
+    log(f"[砺锋] 题库目录：{problems}")
+    log(f"[砺锋] 数据文件：{os.environ['LIFENG_DB']}")
 
     # 端口自己选并固定下来。
     #
@@ -286,10 +399,10 @@ def main() -> int:
     if not _ensure_streamlit_credentials():
         # 凭据写不进去时，headless 之外的路径都不通；此时仍然只能靠用户
         # 自己打开网址，所以把网址打印得显眼一些。
-        print("[砺锋] 无法写入 Streamlit 凭据，请手动打开下面的网址。")
+        log("[砺锋] 无法写入 Streamlit 凭据，请手动打开下面的网址。")
 
-    print(f"[砺锋] 界面地址：{url}")
-    print("[砺锋] 正在启动，就绪后会自动打开窗口。按 Ctrl+C 结束。")
+    log(f"[砺锋] 界面地址：{url}")
+    log("[砺锋] 正在启动，就绪后会自动打开窗口。")
 
     # 等健康检查通过再开窗口 —— 不等的话先看到一个"无法连接"的页面，
     # 用户会以为程序坏了。放在后台线程里，因为 stcli.main() 是阻塞的。

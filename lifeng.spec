@@ -42,6 +42,7 @@ hiddenimports = [
     "lifeng.mastery",
     "lifeng.concepts",
     "lifeng.prompts",
+    "lifeng.settings",
     "lifeng.profile",
     "lifeng.materials",
     "lifeng.planner",
@@ -74,7 +75,39 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,          # 保留控制台：老师能看到题库路径与报错
+    # console=False —— 双击时**不再弹出黑色命令行窗口**。
+    #
+    # 这是「图形化」的第一步，而且是最关键的一步：之前双击 lifeng.exe
+    # 会先弹一个黑框再开窗口，在普通人眼里那就是一个命令行程序，
+    # 界面做得再漂亮也没用。
+    #
+    # 代价是 stdout 没了，所以诊断信息改由 launcher 的 log() 写进
+    # lifeng.log，启动失败则用 fatal() 弹原生对话框 ——
+    # 去控制台与补诊断必须一起做，只做前者等于把问题藏起来。
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+# 命令行入口单独一个可执行文件。
+#
+# `lifeng generate --count 5` 需要把进度打到终端上，而窗口模式的 exe
+# 没有 stdout，print 会直接抛异常。所以保留一个带控制台的版本。
+# 两个 exe 共用同一份依赖，不会让产物变大多少。
+exe_cli = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="lifeng-cli",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -84,6 +117,7 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
+    exe_cli,
     a.binaries,
     a.datas,
     strip=False,

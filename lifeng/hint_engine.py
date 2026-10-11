@@ -157,28 +157,43 @@ def generate_hint(
 
 
 class DeepSeekClient:
-    """DeepSeek API 客户端（OpenAI 兼容端点）。"""
+    """DeepSeek API 客户端（OpenAI 兼容端点）。
+
+    配置来源优先级：构造参数 → 环境变量 → 界面里保存的本地配置。
+    之所以支持最后一条，见 :mod:`lifeng.settings` ——
+    让老师去改系统环境变量，对一个「双击就用」的工具是硬门槛。
+    """
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "deepseek-chat",
-        base_url: str = "https://api.deepseek.com",
+        model: str | None = None,
+        base_url: str | None = None,
         temperature: float = 0.3,
     ) -> None:
-        key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        from lifeng.settings import load_settings
+
+        saved = load_settings()
+        key = (api_key or saved.api_key or "").strip()
         if not key:
             raise HintError(
-                "未提供 DeepSeek API key，且环境变量 DEEPSEEK_API_KEY 未设置。"
+                "还没有配置 API key。可以在界面左侧的「模型设置」里填写并保存，"
+                "不需要改环境变量。"
             )
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
             raise HintError("缺少 openai 依赖，请先 pip install openai") from exc
 
-        self._client = OpenAI(api_key=key, base_url=base_url)
-        self.model = model
+        self.base_url = (base_url or saved.base_url).strip()
+        self.model = (model or saved.model).strip()
         self.temperature = temperature
+        self._key = key
+        self._client = OpenAI(api_key=key, base_url=self.base_url)
+
+    def redact(self, text: str) -> str:
+        """抹掉文本里的密钥。写日志前必须过一遍。"""
+        return text.replace(self._key, "***") if self._key else text
 
     def complete(self, system: str, user: str) -> str:
         resp = self._client.chat.completions.create(
@@ -190,6 +205,25 @@ class DeepSeekClient:
             temperature=self.temperature,
         )
         return resp.choices[0].message.content or ""
+
+    def test_connection(self) -> tuple[bool, str]:
+        """发一个最小请求，验证密钥与端点是否真的可用。
+
+        只返回 ``(是否成功, 给人看的一句话)``，**不回显密钥**；
+        错误信息也过一遍脱敏 —— 有些 SDK 会把请求头带进异常文本里。
+        """
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "回复两个字：可用"}],
+                temperature=0.0,
+                max_tokens=8,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return False, self.redact(f"连接失败：{type(exc).__name__}: {exc}")
+
+        reply = (resp.choices[0].message.content or "").strip()
+        return True, f"连接成功（{self.model}）：{reply[:20] or '（空回复）'}"
 
 
 def current_pitfall(problem: Problem, index: int) -> Pitfall:

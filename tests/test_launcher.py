@@ -8,6 +8,9 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import lifeng.launcher as launcher
 
 
@@ -234,3 +237,120 @@ class TestWaitAndOpen:
 
         launcher._wait_and_open("http://x", "http://x/_stcore/health", timeout=0.1)
         assert opened == [], "服务没起来就不该开窗口"
+
+
+# --------------------------------------------------------------------------
+# 窗口模式下的诊断（去掉黑框的代价）
+# --------------------------------------------------------------------------
+
+
+class TestWindowedModeDiagnostics:
+    """打包成 console=False 后 stdout 没了。
+
+    去掉黑框与补上诊断**必须一起做**：只去黑框等于把报错藏起来，
+    用户看到的是「双击没反应」，比有黑框更糟。
+    """
+
+    def test_log_never_raises_without_stdout(self, monkeypatch, tmp_path):
+        """窗口模式下 sys.stdout 是 None，直接 print 会抛异常。"""
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "stdout", None)
+
+        launcher.log("测试消息")  # 不应抛异常
+
+        assert (tmp_path / "lifeng.log").exists(), "没有写日志文件"
+        assert "测试消息" in (tmp_path / "lifeng.log").read_text(encoding="utf-8")
+
+    def test_log_never_raises_when_stdout_is_broken(self, monkeypatch, tmp_path):
+        """有些环境下 stdout 存在但不可写（管道关闭等）。"""
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+
+        class Broken:
+            def write(self, *_args):
+                raise ValueError("closed")
+
+            def flush(self):
+                raise ValueError("closed")
+
+        monkeypatch.setattr(sys, "stdout", Broken())
+        launcher.log("仍然要写进日志")
+        assert "仍然要写进日志" in (tmp_path / "lifeng.log").read_text(
+            encoding="utf-8"
+        )
+
+    def test_log_appends(self, monkeypatch, tmp_path):
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        launcher.log("第一行")
+        launcher.log("第二行")
+        lines = (tmp_path / "lifeng.log").read_text(encoding="utf-8").splitlines()
+        assert lines == ["第一行", "第二行"]
+
+    def test_log_survives_unwritable_directory(self, monkeypatch, tmp_path):
+        """日志写不进去也不该让程序挂掉。"""
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            launcher.Path, "cwd", staticmethod(lambda: Path("/proc/nonexistent"))
+        )
+        launcher.log("写不进去就算了")  # 不应抛异常
+
+    def test_fatal_records_to_log(self, monkeypatch, tmp_path):
+        """弹窗可能失败（无桌面环境），日志必须留下痕迹。"""
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(launcher.sys, "platform", "linux")
+        monkeypatch.setattr(launcher, "log", launcher.log)
+
+        launcher.fatal("界面文件丢了")
+
+        assert "界面文件丢了" in (tmp_path / "lifeng.log").read_text(encoding="utf-8")
+
+
+class TestSpecIsWindowed:
+    """打包配置层面的约束 —— 这些改错了不会报错，只会让用户看到黑框。"""
+
+    def test_gui_exe_has_no_console(self):
+        src = Path("lifeng.spec").read_text(encoding="utf-8")
+        # 找到 name="lifeng" 那个 EXE 块
+        gui = src[src.find('name="lifeng"') :]
+        gui_block = gui[: gui.find(")")]
+        assert "console=False" in gui_block, (
+            "GUI 版必须是 console=False，否则双击会弹出黑色命令行窗口"
+        )
+
+    def test_cli_exe_keeps_console(self):
+        src = Path("lifeng.spec").read_text(encoding="utf-8")
+        cli = src[src.find('name="lifeng-cli"') :]
+        cli_block = cli[: cli.find(")")]
+        assert "console=True" in cli_block, (
+            "命令行版必须保留控制台，否则 generate 子命令的输出没有地方去"
+        )
+
+    def test_both_exes_are_collected(self):
+        src = Path("lifeng.spec").read_text(encoding="utf-8")
+        coll = src[src.find("coll = COLLECT") :]
+        assert "exe," in coll and "exe_cli," in coll, "COLLECT 里两个 exe 都要有"
+
+    def test_no_bare_print_in_launcher(self):
+        """窗口模式下裸 print 会抛异常 —— 必须走 log()。"""
+        import re
+
+        from lifeng import launcher
+
+        src = Path(launcher.__file__).read_text(encoding="utf-8")
+        # 去掉 log() 函数自身内部那一处
+        body = src.replace('stream.write(line)', "")
+        bare = [
+            line
+            for line in body.splitlines()
+            if re.search(r"(?<![\w.])print\(", line) and "def log" not in line
+        ]
+        assert bare == [], f"launcher 里还有裸 print：{bare}"
