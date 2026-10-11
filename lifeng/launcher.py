@@ -131,14 +131,30 @@ def ensure_standard_streams() -> None:
         sys.stderr = sink  # type: ignore[assignment]
 
 
-def fatal(message: str) -> None:
-    """报告启动期的致命错误。
+def dialogs_enabled() -> bool:
+    """当前环境是否适合弹**模态**对话框。
 
-    窗口模式下没有控制台能显示它 —— 用户只会看到「双击没反应」。
-    所以这里额外弹一个原生对话框；弹不出来时至少日志里有记录。
+    模态对话框会一直阻塞到有人点掉。在没有人的环境里弹，就是永久挂起 ——
+    实测：Windows 的 MessageBoxW 与 macOS 的 tkinter showerror
+    把整条 CI 流水线挂住了 17 分钟以上，直到手工取消。
+
+    所以用**显式信号**判断，而不是「有没有 tty」：
+    真正的图形化双击场景同样没有 tty，但那时正需要弹窗。
     """
-    log(f"[砺锋] 错误：{message}")
+    if os.environ.get("LIFENG_NO_DIALOG"):
+        return False
+    if os.environ.get("CI"):
+        # GitHub Actions 与绝大多数 CI 都会设置这个
+        return False
+    return True
 
+
+def show_dialog(message: str) -> bool:
+    """弹一个原生错误对话框。返回是否成功弹出。
+
+    **这是模态的** —— 会阻塞到有人点掉。只应由 :func:`fatal` 在
+    确认环境里有人时调用。
+    """
     if sys.platform.startswith("win"):
         try:
             import ctypes
@@ -149,7 +165,7 @@ def fatal(message: str) -> None:
                 "砺锋 · 启动失败",
                 0x10,  # MB_ICONERROR
             )
-            return
+            return True
         except Exception:  # noqa: BLE001
             pass
 
@@ -163,8 +179,26 @@ def fatal(message: str) -> None:
             "砺锋 · 启动失败", f"{message}\n\n详细信息见：{log_path()}"
         )
         root.destroy()
+        return True
     except Exception:  # noqa: BLE001
-        pass
+        return False
+
+
+def fatal(message: str, *, dialog: bool | None = None) -> None:
+    """报告启动期的致命错误。
+
+    窗口模式下没有控制台能显示它 —— 用户只会看到「双击没反应」，
+    所以额外弹一个原生对话框。
+
+    ``dialog=None`` 时按 :func:`dialogs_enabled` 自动判断。
+    **无论弹不弹，日志里一定留下记录。**
+    """
+    log(f"[砺锋] 错误：{message}")
+
+    if dialog is None:
+        dialog = dialogs_enabled()
+    if dialog:
+        show_dialog(message)
 
 
 # --------------------------------------------------------------------------
@@ -232,6 +266,11 @@ def open_browser_window(url: str) -> str:
     """
     import subprocess
     import webbrowser
+
+    if os.environ.get("LIFENG_NO_BROWSER"):
+        # 无头部署、以及在 CI 里跑「启动冒烟测试」时需要关掉 ——
+        # 否则会凭空拉起一个浏览器进程（CI runner 上确实装着 chrome）。
+        return "未打开（LIFENG_NO_BROWSER 已设置）"
 
     browser = _find_chromium()
     if browser:

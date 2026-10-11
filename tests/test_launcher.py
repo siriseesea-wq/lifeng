@@ -306,12 +306,80 @@ class TestWindowedModeDiagnostics:
         from lifeng import launcher
 
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(launcher.sys, "platform", "linux")
-        monkeypatch.setattr(launcher, "log", launcher.log)
 
-        launcher.fatal("界面文件丢了")
+        # **必须关掉弹窗。** 真的去弹的话，Windows 的 MessageBoxW 与
+        # macOS 的 tkinter showerror 都是模态对话框，会一直阻塞到有人点掉 ——
+        # 在 CI 上就是任务永久挂起。实测挂住了整条流水线 17 分钟。
+        launcher.fatal("界面文件丢了", dialog=False)
 
         assert "界面文件丢了" in (tmp_path / "lifeng.log").read_text(encoding="utf-8")
+
+
+class TestDialogsEnabled:
+    """模态对话框绝不能在没有人的环境里弹。"""
+
+    def test_ci_disables_dialogs(self, monkeypatch):
+        from lifeng import launcher
+
+        monkeypatch.delenv("LIFENG_NO_DIALOG", raising=False)
+        monkeypatch.setenv("CI", "true")
+        assert not launcher.dialogs_enabled()
+
+    def test_explicit_flag_disables(self, monkeypatch):
+        from lifeng import launcher
+
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.setenv("LIFENG_NO_DIALOG", "1")
+        assert not launcher.dialogs_enabled()
+
+    def test_interactive_default_is_enabled(self, monkeypatch):
+        """图形化双击场景没有 tty，但正需要弹窗 —— 所以不能靠 tty 判断。"""
+        from lifeng import launcher
+
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("LIFENG_NO_DIALOG", raising=False)
+        assert launcher.dialogs_enabled()
+
+    def test_fatal_skips_dialog_when_disabled(self, monkeypatch, tmp_path):
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        shown: list[str] = []
+        monkeypatch.setattr(launcher, "show_dialog", lambda m: shown.append(m))
+
+        launcher.fatal("测试", dialog=False)
+
+        assert shown == [], "dialog=False 时不该弹窗"
+        assert "测试" in (tmp_path / "lifeng.log").read_text(encoding="utf-8")
+
+    def test_fatal_shows_dialog_when_enabled(self, monkeypatch, tmp_path):
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        shown: list[str] = []
+        monkeypatch.setattr(launcher, "show_dialog", lambda m: shown.append(m))
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("LIFENG_NO_DIALOG", raising=False)
+
+        launcher.fatal("启动失败")
+
+        assert shown == ["启动失败"]
+
+    def test_fatal_in_ci_does_not_show_dialog(self, monkeypatch, tmp_path):
+        """回归：CI 上弹模态对话框会让任务挂到超时。
+
+        实测挂住了整条流水线 17 分钟（Windows MessageBoxW / macOS tkinter）。
+        """
+        from lifeng import launcher
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CI", "true")
+        shown: list[str] = []
+        monkeypatch.setattr(launcher, "show_dialog", lambda m: shown.append(m))
+
+        launcher.fatal("启动失败")
+
+        assert shown == [], "CI 里弹了模态对话框 —— 会永久挂起"
 
 
 class TestSpecIsWindowed:
@@ -354,3 +422,17 @@ class TestSpecIsWindowed:
             if re.search(r"(?<![\w.])print\(", line) and "def log" not in line
         ]
         assert bare == [], f"launcher 里还有裸 print：{bare}"
+
+
+class TestNoBrowserSwitch:
+    def test_switch_suppresses_launch(self, monkeypatch):
+        """无头部署与启动冒烟测试不该凭空拉起浏览器。"""
+        from lifeng import launcher
+
+        monkeypatch.setenv("LIFENG_NO_BROWSER", "1")
+        called: list[str] = []
+        monkeypatch.setattr(launcher, "_find_chromium", lambda: called.append("x") or "/usr/bin/chrome")
+
+        how = launcher.open_browser_window("http://127.0.0.1:1")
+        assert called == [], "设置了开关还是去找浏览器了"
+        assert "未打开" in how

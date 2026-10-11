@@ -63,7 +63,12 @@ class TestLauncherBanner:
         """
         # cwd 必须是项目根，否则 `import lifeng` 失败、进程会以
         # ModuleNotFoundError 瞬间退出 —— 那会让本测试因错误的原因通过或失败。
-        env = {**_env("ascii"), "LIFENG_DB": str(tmp_path / "store.db")}
+        env = {
+            **_env("ascii"),
+            "LIFENG_DB": str(tmp_path / "store.db"),
+            # 这是启动冒烟测试，不要真的拉起浏览器
+            "LIFENG_NO_BROWSER": "1",
+        }
         proc = subprocess.Popen(
             [sys.executable, "-m", "lifeng.launcher"],
             stdout=subprocess.PIPE,
