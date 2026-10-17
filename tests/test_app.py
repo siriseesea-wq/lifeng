@@ -232,3 +232,40 @@ class TestFinishProblem:
 
         assert store.student_overview("S1")[0]["interval_days"] == 3
         assert store.student_overview("S2")[0]["interval_days"] == PENALTY_INTERVAL
+
+
+class TestTrainingStateKey:
+    """训练页状态键必须区分学生。
+
+    回归：早先键是 ``f"{problem_id}:{mode}"``，不含学生代号。
+    老师在同一个浏览器里切换学生时，session_id 不会被重置，
+    后一个学生的作答被写进前一个学生的会话 —— 数据串号。
+    已实测复现（两个学生的作答混在同一行归属下）。
+    """
+
+    def test_key_includes_student(self):
+        from lifeng.views import training_view_key
+
+        a = training_view_key("甲", "p001", "hint")
+        b = training_view_key("乙", "p001", "hint")
+        assert a != b, "换学生但键相同 → session 会复用 → 作答串号"
+
+    def test_key_includes_problem_and_mode(self):
+        from lifeng.views import training_view_key
+
+        base = training_view_key("甲", "p001", "hint")
+        assert base != training_view_key("甲", "p002", "hint")
+        assert base != training_view_key("甲", "p001", "baseline")
+
+    def test_key_is_stable_for_same_inputs(self):
+        from lifeng.views import training_view_key
+
+        assert training_view_key("甲", "p001", "hint") == training_view_key(
+            "甲", "p001", "hint"
+        )
+
+    def test_key_does_not_collide_on_separators(self):
+        """用冒号拼字符串时，值里含冒号会造成歧义。"""
+        from lifeng.views import training_view_key
+
+        assert training_view_key("a:b", "c", "d") != training_view_key("a", "b:c", "d")

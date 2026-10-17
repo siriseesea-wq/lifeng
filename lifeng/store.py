@@ -406,6 +406,24 @@ class Store:
         )
 
     @_translate_storage_errors
+    def known_students(self) -> list[str]:
+        """出现过的学生代号（按最近活跃排序）。
+
+        界面用它做下拉选择，省得每次重输。**刻意不用"上次填的值预填"** ——
+        预填会让人在没注意的情况下用错代号，把作答记到别人名下，
+        那比每次重输糟得多。
+        """
+        rows = self._conn.execute(
+            """
+            SELECT student_code, MAX(updated_at) AS last_seen
+              FROM review_state
+             GROUP BY student_code
+             ORDER BY last_seen DESC
+            """
+        ).fetchall()
+        return [str(r["student_code"]) for r in rows]
+
+    @_translate_storage_errors
     def student_overview(self, student_code: str) -> list[sqlite3.Row]:
         """该学生全部题目的复习状态，按掌握度升序（最弱在前）。"""
         return list(

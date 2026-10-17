@@ -60,6 +60,23 @@ MAX_LEVEL = 4
 # --------------------------------------------------------------------------
 
 
+def training_view_key(student_code: str, problem_id: str, mode: str) -> str:
+    """训练页的状态键。**必须包含学生代号。**
+
+    少了学生代号会出真事故：老师在同一个浏览器里把「学生代号」从 A 换成 B，
+    而题目与模式没变 → 键不变 → 不重置 session_id →
+    B 的作答被写进 A 的会话，日志里还标成 student=A。
+    已实测复现过。
+
+    这个函数单独存在，就是为了能被测试直接钉住 ——
+    它藏在 render_train 里时，只能靠人肉点界面才会发现错。
+
+    用 ASCII 的**单元分隔符**而不是冒号：学生代号是自由文本，
+    写成 ``a:b`` 时，用冒号拼接会让两组不同的输入得到同一个键。
+    """
+    return "\x1f".join((student_code, problem_id, mode))
+
+
 def next_level(current_level: int) -> int:
     """下一个可请求的层级，封顶在 :data:`MAX_LEVEL`。"""
     if current_level < 0:
@@ -173,7 +190,7 @@ def render_train(
         st.error(f"题库里没有 {problem_id}")
         return
 
-    view_key = f"{problem_id}:{mode}"
+    view_key = training_view_key(student_code, problem_id, mode)
     if st.session_state.get("view_key") != view_key:
         st.session_state.view_key = view_key
         st.session_state.level = 0
@@ -321,14 +338,17 @@ def render_train(
                         st.session_state.session_id = store.create_session(
                             problem.id, student_code, mode
                         )
-                    text, meta = request_hint(
-                        problem,
-                        attempt_text,
-                        level,
-                        client=client,
-                        store=store,
-                        session_id=st.session_state.session_id,
-                    )
+                    # 必须给加载提示。模型要等 5~15 秒，没有提示时
+                    # 学生的感受是「点了没反应」，会反复点。
+                    with st.spinner(f"正在想第 {level} 层提示…"):
+                        text, meta = request_hint(
+                            problem,
+                            attempt_text,
+                            level,
+                            client=client,
+                            store=store,
+                            session_id=st.session_state.session_id,
+                        )
 
                 st.session_state.level = level
                 st.session_state.history.append((f"第 {level} 层提示", text))
@@ -425,8 +445,18 @@ def render_today(*, student_code: str, db_path: Path, problems_dir: Path) -> Non
     if plan.is_empty:
         theme.empty_state(
             "今天没有任务",
-            "题库空了，或者都还没标注。<br>可以去「训练」页自己挑一道。",
+            "可能是题库空了，或者这些题都还没标骨架。<br>"
+            "可以去「出题」页生成几道，或者去「训练」页自己挑一道。",
         )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("去出题", width="stretch"):
+                st.session_state.pending_page = "出题"
+                st.rerun()
+        with c2:
+            if st.button("去训练", width="stretch"):
+                st.session_state.pending_page = "训练"
+                st.rerun()
         return
 
     theme.stats(

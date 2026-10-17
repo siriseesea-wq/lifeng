@@ -17,6 +17,7 @@ import streamlit as st
 from lifeng import theme
 from lifeng.hint_engine import DeepSeekClient, HintError
 from lifeng.models import SkeletonError, load_problems
+from lifeng.store import Store
 from lifeng.views import (
     render_generate,
     render_model_settings,
@@ -57,6 +58,34 @@ def _client():
 def _forget_client() -> None:
     """配置变更后丢掉缓存，下次访问重新构建。"""
     _client.clear()
+
+
+def _student_selector() -> str:
+    """学生代号：已有学生用下拉选，新学生手填。
+
+    **不「预填上次填的值」**：那会让人在没注意时用错代号，
+    把作答记到别人名下 —— 比每次重输糟得多。用选择就不会错。
+    """
+    try:
+        with Store(DB_PATH) as store:
+            known = store.known_students()
+    except Exception:  # noqa: BLE001
+        known = []
+
+    if not known:
+        return st.text_input("学生代号", value="", key="student_new").strip()
+
+    options = [*known, "＋ 新学生"]
+    # index=None 而不是默认选第一个：默认选中会让人在没注意时用错代号，
+    # 把作答记到别人名下 —— 那正是要避免的事。必须主动选一次。
+    picked = st.selectbox(
+        "学生", options=options, index=None, placeholder="请选择学生", key="student_pick"
+    )
+    if picked is None:
+        return ""
+    if picked != "＋ 新学生":
+        return picked
+    return st.text_input("新学生代号", value="", key="student_new").strip()
 
 
 def _apply_pending_navigation() -> None:
@@ -116,7 +145,7 @@ def main() -> None:
         render_model_settings(on_saved=_forget_client)
         st.divider()
 
-        student_code = st.text_input("学生代号", value="").strip()
+        student_code = _student_selector()
         st.radio("页面", PAGES, key="nav", horizontal=False)
         st.divider()
 
