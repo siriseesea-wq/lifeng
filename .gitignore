@@ -31,3 +31,7 @@ android/app/build/
 android/local.properties
 *.apk
 *.keystore
+
+# 运行期日志：launcher 写在运行目录，不能进仓库
+lifeng.log
+*.log
